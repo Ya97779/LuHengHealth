@@ -183,14 +183,24 @@ struct DeviceInfoCard: View {
                         Text(viewModel.connectedDevices.first?.name != nil ? "设备已连接" : "设备未连接")
                             .font(.system(size: 14))
                             .foregroundColor(.gray)
-                        
+
                         Text("|")
                             .font(.system(size: 14))
                             .foregroundColor(.gray)
-                        
+
                         Text("电量\(viewModel.batteryVoltage ?? 0)%")
                             .font(.system(size: 14))
                             .foregroundColor(.gray)
+
+                        if let firmwareVersion = viewModel.firmwareVersion {
+                            Text("|")
+                                .font(.system(size: 14))
+                                .foregroundColor(.gray)
+
+                            Text("v\(firmwareVersion / 10).\(firmwareVersion % 10)")
+                                .font(.system(size: 14))
+                                .foregroundColor(.gray)
+                        }
                     }
                     
                     // 信息同步标签

@@ -297,7 +297,7 @@ struct DeviceDetailViewMini: View {
                             Text("\(batteryVoltage)")
                                 .font(.system(.title, design: .rounded))
                                 .foregroundColor(.green)
-                            Text("mV")
+                            Text("%")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -308,8 +308,52 @@ struct DeviceDetailViewMini: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                
-              
+
+                // 步数分区 (v1.2新增)
+                Section("步数") {
+                    if let stepCount = viewModel.stepCount {
+                        HStack {
+                            Image(systemName: "figure.walk")
+                                .foregroundColor(.orange)
+                                .font(.title)
+                            Text("\(stepCount)")
+                                .font(.system(.title, design: .rounded))
+                                .foregroundColor(.orange)
+                            Text("步")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("暂无步数数据")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                // 固件版本号分区 (v1.2新增)
+                Section("固件版本") {
+                    if let firmwareVersion = viewModel.firmwareVersion {
+                        HStack {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundColor(.purple)
+                                .font(.title)
+                            Text("\(firmwareVersion / 10).\(firmwareVersion % 10)")
+                                .font(.system(.title, design: .rounded))
+                                .foregroundColor(.purple)
+                            Text("v")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("暂无固件版本数据")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+
             }
             .navigationTitle("设备详情") // 导航标题
             .navigationBarTitleDisplayMode(.inline) // 标题紧凑显示

@@ -118,7 +118,9 @@ class BLEViewModel: NSObject, ObservableObject {
     @Published var ffe4HexText: String = "--"   // FFE4 最新十六进制文本
     @Published var heartRate: Int? = nil        // 解析后的心率值
     @Published var bloodOxygen: Int? = nil      // 解析后的血氧值
-    @Published var batteryVoltage: Int? = nil   // 解析后的电池电压值（毫伏）
+    @Published var batteryVoltage: Int? = nil   // 解析后的电池电压值（百分比）
+    @Published var stepCount: Int? = nil        // 解析后的步数 (v1.2新增)
+    @Published var firmwareVersion: Int? = nil  // 解析后的固件版本号 (v1.2新增)
     @Published var isFfe4Notifying = false      // FFE4 订阅状态（可在 UI 做开关展示）
     
     /// 发现的蓝牙设备列表，UI会自动响应此数组的变化
@@ -379,7 +381,9 @@ class BLEViewModel: NSObject, ObservableObject {
         heartRate = nil
         bloodOxygen = nil
         batteryVoltage = nil
-        
+        stepCount = nil  // v1.2新增
+        firmwareVersion = nil  // v1.2新增
+
         if let why = reason, !why.isEmpty {
             print("已断开：\(peripheral.name ?? "未知设备")，原因：\(why)")
         } else {
@@ -597,7 +601,9 @@ extension BLEViewModel: BLEAssistDelegate {
                 self.heartRate = nil
                 self.bloodOxygen = nil
                 self.batteryVoltage = nil
-                
+                self.stepCount = nil  // v1.2新增
+                self.firmwareVersion = nil  // v1.2新增
+
                 // 重置存储缓存，开始新设备的数据记录
                 self.resetStorageCache()
                 
@@ -706,16 +712,18 @@ extension BLEViewModel: BLEAssistDelegate {
                 if characteristic.uuid == self.notifyCharUUID {
                     // 使用协议解析器解析数据
                     let healthData = BLEProtocolParser.shared.parseFFE4Data(value)
-                    
+
                     // 更新UI显示数据
                     self.ffe4HexText = healthData.hexString.isEmpty ? "--" : healthData.hexString
                     self.heartRate = healthData.heartRate
                     self.bloodOxygen = healthData.bloodOxygen
                     self.batteryVoltage = healthData.batteryVoltage
-                    
+                    self.stepCount = healthData.stepCount  // v1.2新增
+                    self.firmwareVersion = healthData.firmwareVersion  // v1.2新增
+
                     // 打印调试信息
                     if healthData.isValid {
-                        print("FFE4 解析成功: 心率=\(healthData.heartRate ?? 0), 血氧=\(healthData.bloodOxygen ?? 0), 电池电压=\(healthData.batteryVoltage ?? 0)mV")
+                        print("FFE4 解析成功: 心率=\(healthData.heartRate ?? 0), 血氧=\(healthData.bloodOxygen ?? 0), 电池电压=\(healthData.batteryVoltage ?? 0)%, 步数=\(healthData.stepCount ?? 0), 固件版本=\(healthData.firmwareVersion ?? 0)")
                         
                         // 保存有效的健康数据到数据库
                         self.saveHealthDataToDatabase(healthData)
