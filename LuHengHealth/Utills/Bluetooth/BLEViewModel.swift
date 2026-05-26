@@ -122,6 +122,43 @@ class BLEViewModel: NSObject, ObservableObject {
     @Published var stepCount: Int? = nil        // 解析后的步数 (v1.2新增)
     @Published var firmwareVersion: Int? = nil  // 解析后的固件版本号 (v1.2新增)
     @Published var isFfe4Notifying = false      // FFE4 订阅状态（可在 UI 做开关展示）
+
+    // MARK: - 新协议属性 (v2.0 CMD模式)
+
+    // 序列号
+    @Published var serialNumber: String? = nil
+
+    // 告警相关
+    @Published var currentAlarm: AlarmData? = nil
+    @Published var alarmMessage: String? = nil
+    @Published var showAlarm: Bool = false
+
+    // 灯光参数回读
+    @Published var lightSlot: UInt8 = 0
+    @Published var lightRed: UInt8 = 0
+    @Published var lightGreen: UInt8 = 0
+    @Published var lightBlue: UInt8 = 0
+    @Published var lightBrightness: UInt16 = 0
+    @Published var lightBreathing: Bool = false
+
+    // 历史数据
+    @Published var heartRateHistory: HistoryRecord?
+    @Published var bloodOxygenHistory: HistoryRecord?
+    @Published var stepCountHistory: HistoryRecord?
+
+    // ACK状态
+    @Published var lastAckCmd: UInt8? = nil
+    @Published var lastAckStatus: UInt8? = nil
+
+    // MARK: - 历史记录结构体
+    struct HistoryRecord {
+        let year: Int, month: Int, day: Int, hour: Int, minute: Int
+        let minValue: Int, maxValue: Int
+    }
+
+    // MARK: - 轮询定时器
+    private var pollingTimer: Timer?
+    private let pollingInterval: TimeInterval = 3.0
     
     /// 发现的蓝牙设备列表，UI会自动响应此数组的变化
     @Published var discoveredDevices: [BluetoothDevice] = []
@@ -383,6 +420,7 @@ class BLEViewModel: NSObject, ObservableObject {
         batteryVoltage = nil
         stepCount = nil  // v1.2新增
         firmwareVersion = nil  // v1.2新增
+        stopPolling()
 
         if let why = reason, !why.isEmpty {
             print("已断开：\(peripheral.name ?? "未知设备")，原因：\(why)")
@@ -682,7 +720,7 @@ extension BLEViewModel: BLEAssistDelegate {
             // 2) 找到 FFE3（写入数据的特征）
             if let w = chars.first(where: { $0.uuid == self.writeCharUUID }) {
                 self.writeChar = w
-                // 这里不立即写，提供公开方法供 UI/业务调用
+                self.startPolling()
             } else {
                 // print("未在 FFE0 下发现 FFE3")
             }
@@ -704,47 +742,167 @@ extension BLEViewModel: BLEAssistDelegate {
                       let characteristic = characteristic,
                       let value = characteristic.value else { return }
 
-                // 你的通用存档逻辑
                 self.latestValueByCharacteristic[characteristic.uuid] = value
                 self.valueLogByCharacteristic[characteristic.uuid, default: []].append(value)
 
-                // 如果是我们关心的 FEE4：使用协议解析器解析数据
                 if characteristic.uuid == self.notifyCharUUID {
-                    // 使用协议解析器解析数据
-                    let healthData = BLEProtocolParser.shared.parseFFE4Data(value)
+                    self.ffe4HexText = BLEProtocolParser.shared.bytesToHexString(value)
 
-                    // 更新UI显示数据
-                    self.ffe4HexText = healthData.hexString.isEmpty ? "--" : healthData.hexString
-                    self.heartRate = healthData.heartRate
-                    self.bloodOxygen = healthData.bloodOxygen
-                    self.batteryVoltage = healthData.batteryVoltage
-                    self.stepCount = healthData.stepCount  // v1.2新增
-                    self.firmwareVersion = healthData.firmwareVersion  // v1.2新增
+                    let frame = BLEProtocolParser.shared.parse(value)
 
-                    // 打印调试信息
-                    if healthData.isValid {
-                        print("FFE4 解析成功: 心率=\(healthData.heartRate ?? 0), 血氧=\(healthData.bloodOxygen ?? 0), 电池电压=\(healthData.batteryVoltage ?? 0)%, 步数=\(healthData.stepCount ?? 0), 固件版本=\(healthData.firmwareVersion ?? 0)")
-                        
-                        // 保存有效的健康数据到数据库
-                        self.saveHealthDataToDatabase(healthData)
+                    guard frame.isValid else { return }
+
+                    switch frame.type {
+                    case .responseFrame:
+                        self.handleResponseFrame(frame)
+                    case .ackFrame:
+                        self.handleAckFrame(frame)
+                    case .otaAck:
+                        break
+                    case .unknown:
+                        break
                     }
                 }
             }
     }
-    
-    /// 向 FFE3 写入RGB控制数据包
-    /// - Parameters:
-    ///   - red: 红色分量 (0-255)
-    ///   - green: 绿色分量 (0-255)
-    ///   - blue: 蓝色分量 (0-255)
-    ///   - mode: 模式选择 (0-255)
-    ///   - preferWithoutResponse: 若特征支持无应答写，是否优先使用（默认 true）
-    func writeRGBControlToFFE3(red: UInt8, green: UInt8, blue: UInt8, mode: UInt8, brightness: UInt16 ,preferWithoutResponse: Bool = true) {
-        // 构建数据包: 帧头0xAA 命令码0x0F 红色字节 绿色字节 蓝色字节 模式选择 亮度高8位 亮度低8位 帧尾0x55
-        let brightnessHigh = UInt8(brightness >> 8)    // 亮度高8位
-        let brightnessLow = UInt8(brightness & 0xFF)  // 亮度低8位
-        let data = Data([0xAA, 0x0F, red, green, blue, mode, brightnessHigh, brightnessLow, 0x55])
-        writeToFFE3(data, preferWithoutResponse: preferWithoutResponse)
+
+    // MARK: - 新协议数据处理
+
+    private func handleResponseFrame(_ frame: ParsedFrame) {
+        switch frame.cmd {
+        case 0x01:
+            self.heartRate = BLEProtocolParser.shared.parseHeartRateResponse(frame)
+        case 0x02:
+            self.bloodOxygen = BLEProtocolParser.shared.parseBloodOxygenResponse(frame)
+        case 0x03:
+            self.stepCount = BLEProtocolParser.shared.parseStepCountResponse(frame)
+        case 0x04:
+            self.batteryVoltage = BLEProtocolParser.shared.parseBatteryLevelResponse(frame)
+        case 0x05:
+            self.firmwareVersion = BLEProtocolParser.shared.parseFirmwareVersionResponse(frame)
+        case 0x06:
+            handleSerialNumberFrame(frame)
+        case 0x07:
+            handleHeartRateHistoryFrame(frame)
+        case 0x08:
+            handleBloodOxygenHistoryFrame(frame)
+        case 0x09:
+            handleStepCountHistoryFrame(frame)
+        case 0x30:
+            handleLightColorResponse(frame)
+        case 0x31:
+            handleLightBrightnessResponse(frame)
+        case 0x80:
+            handleAlarm(frame)
+        default:
+            break
+        }
+    }
+
+    private var serialNumberFrames: [ParsedFrame] = []
+
+    private func handleSerialNumberFrame(_ frame: ParsedFrame) {
+        serialNumberFrames.append(frame)
+        if serialNumberFrames.count == 2 {
+            self.serialNumber = BLEProtocolParser.shared.combineSerialNumber(frames: serialNumberFrames)
+            serialNumberFrames.removeAll()
+        }
+    }
+
+    private var heartRateHistoryFrames: [ParsedFrame] = []
+    private var bloodOxygenHistoryFrames: [ParsedFrame] = []
+    private var stepCountHistoryFrames: [ParsedFrame] = []
+
+    private func handleHeartRateHistoryFrame(_ frame: ParsedFrame) {
+        heartRateHistoryFrames.append(frame)
+        if heartRateHistoryFrames.count == 2 {
+            if let timeFrame = BLEProtocolParser.shared.parseHistoryTimeResponse(heartRateHistoryFrames[0]),
+               let dataFrame = BLEProtocolParser.shared.parseHistoryDataResponse(heartRateHistoryFrames[1]) {
+                self.heartRateHistory = HistoryRecord(
+                    year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
+                    hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
+                    minValue: Int(dataFrame.minValue), maxValue: Int(dataFrame.maxValue)
+                )
+            }
+            heartRateHistoryFrames.removeAll()
+        }
+    }
+
+    private func handleBloodOxygenHistoryFrame(_ frame: ParsedFrame) {
+        bloodOxygenHistoryFrames.append(frame)
+        if bloodOxygenHistoryFrames.count == 2 {
+            if let timeFrame = BLEProtocolParser.shared.parseHistoryTimeResponse(bloodOxygenHistoryFrames[0]),
+               let dataFrame = BLEProtocolParser.shared.parseHistoryDataResponse(bloodOxygenHistoryFrames[1]) {
+                self.bloodOxygenHistory = HistoryRecord(
+                    year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
+                    hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
+                    minValue: Int(dataFrame.minValue), maxValue: Int(dataFrame.maxValue)
+                )
+            }
+            bloodOxygenHistoryFrames.removeAll()
+        }
+    }
+
+    private func handleStepCountHistoryFrame(_ frame: ParsedFrame) {
+        stepCountHistoryFrames.append(frame)
+        if stepCountHistoryFrames.count == 2 {
+            if let timeFrame = BLEProtocolParser.shared.parseHistoryTimeResponse(stepCountHistoryFrames[0]),
+               let dataFrame = BLEProtocolParser.shared.parseHistoryDataResponse(stepCountHistoryFrames[1]) {
+                self.stepCountHistory = HistoryRecord(
+                    year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
+                    hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
+                    minValue: Int(dataFrame.minValue), maxValue: Int(dataFrame.maxValue)
+                )
+            }
+            stepCountHistoryFrames.removeAll()
+        }
+    }
+
+    private func handleLightColorResponse(_ frame: ParsedFrame) {
+        if let lightColor = BLEProtocolParser.shared.parseLightColorResponse(frame) {
+            self.lightSlot = lightColor.slot
+            self.lightRed = lightColor.r
+            self.lightGreen = lightColor.g
+            self.lightBlue = lightColor.b
+        }
+    }
+
+    private func handleLightBrightnessResponse(_ frame: ParsedFrame) {
+        if let lightBrightness = BLEProtocolParser.shared.parseLightBrightnessResponse(frame) {
+            self.lightBrightness = lightBrightness.brightness
+            self.lightBreathing = lightBrightness.breathing
+        }
+    }
+
+    private func handleAckFrame(_ frame: ParsedFrame) {
+        self.lastAckCmd = frame.originalCmd
+        self.lastAckStatus = frame.status
+    }
+
+    // MARK: - 告警处理
+
+    private func handleAlarm(_ frame: ParsedFrame) {
+        guard let alarm = BLEProtocolParser.shared.parseAlarmResponse(frame) else { return }
+        self.currentAlarm = alarm
+
+        switch alarm.alarmCode {
+        case 0x02:
+            self.alarmMessage = "设备电量低：\(alarm.paramA)%"
+        case 0x11:
+            self.alarmMessage = "心率过低：\(alarm.paramA) bpm（低于 \(alarm.paramB)）"
+        case 0x12:
+            self.alarmMessage = "心率过高：\(alarm.paramA) bpm（高于 \(alarm.paramB)）"
+        case 0x21:
+            self.alarmMessage = "血氧过低：\(alarm.paramA)%（低于 \(alarm.paramB)%）"
+        case 0x22:
+            self.alarmMessage = "血氧无效：\(alarm.paramA)%（超过100%）"
+        default:
+            self.alarmMessage = "设备告警：代码=\(alarm.alarmCode)"
+        }
+        self.showAlarm = true
+    }
+
+    // MARK: - 向 FFE3 写入数据包
     }
     
     /// 向 FFE3 写入数据包
@@ -781,7 +939,100 @@ extension BLEViewModel: BLEAssistDelegate {
                print("FFE3 <= \(hex)  [\(writeType == .withResponse ? "WR" : "WOR")]")
            }
     }
-    
+
+    // MARK: - 新协议命令发送方法 (v2.0 CMD模式)
+
+    /// 通用命令发送方法
+    /// - Parameters:
+    ///   - cmd: 命令码
+    ///   - data: 数据区字节数组
+    func sendCommand(_ cmd: UInt8, data: [UInt8] = []) {
+        let frame = BLECommandBuilder.buildWriteFrame(cmd: cmd, data: data)
+        writeToFFE3(frame)
+    }
+
+    // MARK: - 数据读取命令
+
+    func requestHeartRate()       { sendCommand(0x11) }
+    func requestBloodOxygen()      { sendCommand(0x12) }
+    func requestStepCount()        { sendCommand(0x13) }
+    func requestBatteryLevel()     { sendCommand(0x14) }
+    func requestFirmwareVersion()  { sendCommand(0x15) }
+    func requestSerialNumber()     { sendCommand(0x16) }
+
+    func requestHeartRateHistory()    { sendCommand(0x17) }
+    func requestBloodOxygenHistory()  { sendCommand(0x18) }
+    func requestStepCountHistory()    { sendCommand(0x19) }
+
+    // MARK: - 灯光控制命令
+
+    func setLightColor(slot: UInt8, r: UInt8, g: UInt8, b: UInt8) {
+        sendCommand(0x21, data: [slot, r, g, b])
+    }
+
+    func setLightBrightness(slot: UInt8, brightness: UInt16) {
+        let brH = UInt8(brightness >> 8)
+        let brL = UInt8(brightness & 0xFF)
+        sendCommand(0x22, data: [slot, brH, brL])
+    }
+
+    func setBreathingLight(enabled: Bool) {
+        sendCommand(0x23, data: [enabled ? 0x01 : 0x00])
+    }
+
+    func switchLightSlot(slot: UInt8) {
+        sendCommand(0x24, data: [slot])
+    }
+
+    func requestLightParams(slot: UInt8 = 0xFF) {
+        sendCommand(0x30, data: [slot])
+    }
+
+    // MARK: - 批量读取
+
+    func requestAllData() {
+        requestHeartRate()
+        requestBloodOxygen()
+        requestStepCount()
+        requestBatteryLevel()
+        requestFirmwareVersion()
+        requestLightParams()
+    }
+
+    // MARK: - 旧接口兼容
+
+    /// 向 FFE3 写入RGB控制数据包 (兼容旧接口，内部转为新协议)
+    /// - Parameters:
+    ///   - red: 红色分量 (0-255)
+    ///   - green: 绿色分量 (0-255)
+    ///   - blue: 蓝色分量 (0-255)
+    ///   - mode: 模式选择 (0-255)
+    ///   - preferWithoutResponse: 若特征支持无应答写，是否优先使用（默认 true）
+    func writeRGBControlToFFE3(red: UInt8, green: UInt8, blue: UInt8, mode: UInt8, brightness: UInt16, preferWithoutResponse: Bool = true) {
+        let breathing = (mode == 2)
+        setBreathingLight(enabled: breathing)
+        setLightColor(slot: 0xFF, r: red, g: green, b: blue)
+        setLightBrightness(slot: 0xFF, brightness: brightness)
+    }
+
+    // MARK: - 自动轮询定时器
+
+    private func startPolling() {
+        stopPolling()
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
+            self?.requestHeartRate()
+            self?.requestBloodOxygen()
+            self?.requestStepCount()
+            self?.requestBatteryLevel()
+        }
+        requestAllData()
+    }
+
+    private func stopPolling() {
+        pollingTimer?.invalidate()
+        pollingTimer = nil
+    }
+
     // MARK: - 健康数据存储方法
     
     /// 将BLE读取的健康数据保存到数据库
