@@ -1,12 +1,16 @@
 # 蓝牙协议层实现文档
 
-> 记录阶段一~三完成的蓝牙协议层重构（从旧协议固定17字节推送升级到新协议CMD请求-响应+ACK模式）
+> 记录阶段一~四完成的蓝牙协议层重构（从旧协议固定17字节推送升级到新协议CMD请求-响应+ACK模式）
 
 ---
 
 ## 一、完成概述
 
-阶段一完成了蓝牙协议层的重构，从旧协议（固定17字节推送）升级到新协议（CMD请求-响应 + ACK模式）。
+阶段一至阶段四完成了蓝牙通信协议的全面升级：
+- **阶段一**：协议解析层重写（BLECommandBuilder + BLEProtocolParser）
+- **阶段二**：ViewModel 核心逻辑升级（命令发送、数据接收分发、自动轮询、告警处理）
+- **阶段三**：写入格式适配（HomePage.swift 灯光控制兼容，无需修改）
+- **阶段四**：前端页面适配（BLEContentView 设备详情页 + DevicePage 设备信息卡片）
 
 ---
 
@@ -16,6 +20,9 @@
 |------|------|------|
 | `BLECommandBuilder.swift` | 新建 | 蓝牙命令构建工具类 |
 | `BLEProtocolParser.swift` | 重写 | 蓝牙帧解析器 |
+| `BLEViewModel.swift` | 大幅修改 | 命令发送、数据接收分发、自动轮询、告警处理 |
+| `BLEContentView.swift` | 中等修改 | 设备详情页：新增序列号/灯光参数/告警弹窗 |
+| `DevicePage.swift` | 小幅修改 | 设备信息卡片：新增序列号显示 |
 
 ---
 
@@ -185,16 +192,19 @@ if let alarm = BLEProtocolParser.shared.parseAlarmResponse(frame) {
 
 ---
 
-## 六、下一步计划
+## 六、当前状态
 
-阶段二将修改 `BLEViewModel.swift`，实现：
-- 发布属性新增（序列号、告警、灯光参数、历史数据）
-- 命令发送方法改造
-- 数据接收分发逻辑改造
-- 自动轮询定时器
-- 告警处理逻辑
+阶段一至四已全部完成。详见: [../../docs/protocol-upgrade-plan.md](../../docs/protocol-upgrade-plan.md)
 
-详见: [../../docs/protocol-upgrade-plan.md](../../docs/protocol-upgrade-plan.md)
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| 阶段一 | 协议解析层重写 | ✅ 已完成 |
+| 阶段二 | ViewModel 核心逻辑升级 | ✅ 已完成 |
+| 阶段三 | 写入格式适配 | ✅ 已完成 |
+| 阶段四 | 前端页面适配 | ✅ 已完成 |
+| 阶段五 | 文档更新 | ⏳ 待执行 |
+| 阶段六 | OTA 升级功能（可选） | ⏳ 可选 |
+| 阶段七 | 历史数据功能（可选） | ⏳ 可选 |
 
 ---
 
@@ -309,9 +319,46 @@ func writeRGBControlToFFE3(red: UInt8, green: UInt8, blue: UInt8,
 
 ---
 
-## 九、Git 提交记录
+## 九、阶段四完成内容 (前端页面适配)
+
+### 9.1 BLEContentView.swift — 设备详情页
+
+**新增 Section：**
+
+| 分组 | 内容 | 说明 |
+|------|------|------|
+| 序列号 | 显示设备序列号（等宽字体） | 未获取时显示「读取序列号」按钮 |
+| 灯光参数 | RGB 颜色圆点 + 数值、亮度、呼吸灯状态 | 带「刷新灯光参数」按钮 |
+
+**新增交互：**
+- `.onAppear`：打开设备详情页时自动调用 `requestAllData()` 请求所有数据
+- `.alert`：设备告警时弹出提示框，显示告警消息
+
+**原有 Section 保持不变：** 设备信息、GATT 概览、FFE4 十六进制、心率、血氧、电池、步数、固件版本
+
+### 9.2 DevicePage.swift — 设备信息卡片
+
+在 `DeviceInfoCard` 的固件版本下方添加序列号显示行：
+- 图标：`number` 系统图标，teal 色
+- 文本：等宽字体，灰色
+- 条件：仅在有序列号时显示
+
+### 9.3 编译错误修复
+
+| 文件 | 问题 | 修复 |
+|------|------|------|
+| `BLEViewModel.swift` | extension 中不能包含存储属性 | 移动到主类体 |
+| `BLEViewModel.swift` | 多余的 `}` | 删除 |
+| `BLEViewModel.swift` | `BLEHealthData` 类型不存在 | 删除未使用的 `saveHealthDataToDatabase` 方法 |
+| `BLEProtocolParser.swift` | `mutating` 不适用于 class | `MultiFrameBuffer` 改为 struct |
+| `BLEProtocolParser.swift` | 实例方法中访问静态成员 | 添加 `Self.` 前缀 |
+
+---
+
+## 十、Git 提交记录
 
 ```
+035b979 feat(ui): 阶段四完成 - 前端页面适配新协议 + 修复编译错误
 38360fa docs: 更新蓝牙协议实现文档
 08c8a53 feat(ble): 阶段二完成 - ViewModel核心逻辑升级
 f3a86ff feat(ble): 重构蓝牙协议层支持新CMD协议
