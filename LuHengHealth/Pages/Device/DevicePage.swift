@@ -203,6 +203,18 @@ struct DeviceInfoCard: View {
                         }
                     }
                     
+                    // 序列号
+                    if let sn = viewModel.serialNumber {
+                        HStack(spacing: 4) {
+                            Image(systemName: "number")
+                                .font(.system(size: 12))
+                                .foregroundColor(.teal)
+                            Text(sn)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    
                     // 信息同步标签
                     Text(viewModel.connectedDevices.first?.name != nil ?"信息同步": "信息未同步")
                         .font(.system(size: 12))

@@ -95,7 +95,7 @@ struct HistoryDataFrame {
 }
 
 // MARK: - 多帧数据缓冲区
-class MultiFrameBuffer {
+struct MultiFrameBuffer {
     private var buffer: [UInt8: [ParsedFrame]] = [:]
     private let timeout: TimeInterval = 2.0
 
@@ -170,11 +170,11 @@ class BLEProtocolParser {
     private func identifyFrameType(_ bytes: [UInt8]) -> FrameType {
         guard bytes.count >= 2 else { return .unknown }
 
-        if bytes[0] == responseFrameHeader1 && bytes[1] == responseFrameHeader2 {
+        if bytes[0] == Self.responseFrameHeader1 && bytes[1] == Self.responseFrameHeader2 {
             return .responseFrame
-        } else if bytes[0] == ackFrameHeader1 && bytes[1] == ackFrameHeader2 {
+        } else if bytes[0] == Self.ackFrameHeader1 && bytes[1] == Self.ackFrameHeader2 {
             return .ackFrame
-        } else if bytes[0] == otaFrameHeader {
+        } else if bytes[0] == Self.otaFrameHeader {
             return .otaAck
         }
         return .unknown
@@ -202,8 +202,8 @@ class BLEProtocolParser {
         let footerIndex2 = checksumIndex + 2
 
         // 验证帧尾
-        guard bytes[footerIndex1] == responseFrameFooter1 &&
-              bytes[footerIndex2] == responseFrameFooter2 else {
+        guard bytes[footerIndex1] == Self.responseFrameFooter1 &&
+              bytes[footerIndex2] == Self.responseFrameFooter2 else {
             return ParsedFrame(type: .responseFrame, cmd: cmd, data: [], isValid: false, originalCmd: nil, status: nil)
         }
 
@@ -237,7 +237,7 @@ class BLEProtocolParser {
         }
 
         // 验证帧尾
-        guard bytes[9] == ackFrameFooter1 && bytes[10] == ackFrameFooter2 else {
+        guard bytes[9] == Self.ackFrameFooter1 && bytes[10] == Self.ackFrameFooter2 else {
             return ParsedFrame(type: .ackFrame, cmd: cmd, data: [], isValid: false, originalCmd: originalCmd, status: status)
         }
 
@@ -266,7 +266,7 @@ class BLEProtocolParser {
         let errorCode = bytes[6]
 
         // 验证帧尾
-        guard bytes.count >= 8 && bytes[7] == otaFrameFooter else {
+        guard bytes.count >= 8 && bytes[7] == Self.otaFrameFooter else {
             return ParsedFrame(type: .otaAck, cmd: cmd, data: [], isValid: false, originalCmd: nil, status: status)
         }
 

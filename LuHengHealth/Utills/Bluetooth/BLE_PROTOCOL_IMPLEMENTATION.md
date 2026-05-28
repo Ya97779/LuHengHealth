@@ -1,6 +1,6 @@
 # 蓝牙协议层实现文档
 
-> 记录阶段一完成的蓝牙协议层重构
+> 记录阶段一~三完成的蓝牙协议层重构（从旧协议固定17字节推送升级到新协议CMD请求-响应+ACK模式）
 
 ---
 
@@ -280,13 +280,43 @@ private func stopPolling()
 
 ---
 
-## 八、Git 提交记录
+## 八、阶段三完成内容 (写入格式适配)
+
+### 8.1 概述
+
+阶段三验证了 HomePage.swift 灯光控制调用与新协议的兼容性，确认**无需修改**任何前端代码。
+
+### 8.2 兼容性分析
+
+| 调用方 | 调用方法 | 兼容方式 |
+|--------|---------|---------|
+| `HomePage.swift` | `writeRGBControlToFFE3(red:green:blue:mode:brightness:)` | ✅ 已在阶段二内部转为新协议 |
+
+### 8.3 writeRGBControlToFFE3 兼容实现
+
+```swift
+func writeRGBControlToFFE3(red: UInt8, green: UInt8, blue: UInt8,
+                            mode: UInt8, brightness: UInt16,
+                            preferWithoutResponse: Bool = true) {
+    let breathing = (mode == 2)
+    setBreathingLight(enabled: breathing)      // CMD 0x23
+    setLightColor(slot: 0xFF, r: red, g: green, b: blue)      // CMD 0x21
+    setLightBrightness(slot: 0xFF, brightness: brightness)    // CMD 0x22
+}
+```
+
+**结论：** HomePage.swift 保持原样调用即可正常工作，无需任何修改。
+
+---
+
+## 九、Git 提交记录
 
 ```
+38360fa docs: 更新蓝牙协议实现文档
 08c8a53 feat(ble): 阶段二完成 - ViewModel核心逻辑升级
 f3a86ff feat(ble): 重构蓝牙协议层支持新CMD协议
 ```
 
 ---
 
-*最后更新: 2026-05-22*
+*最后更新: 2026-05-26*

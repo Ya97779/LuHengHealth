@@ -159,7 +159,13 @@ class BLEViewModel: NSObject, ObservableObject {
     // MARK: - 轮询定时器
     private var pollingTimer: Timer?
     private let pollingInterval: TimeInterval = 3.0
-    
+
+    // MARK: - 多帧数据缓存
+    private var serialNumberFrames: [ParsedFrame] = []
+    private var heartRateHistoryFrames: [ParsedFrame] = []
+    private var bloodOxygenHistoryFrames: [ParsedFrame] = []
+    private var stepCountHistoryFrames: [ParsedFrame] = []
+
     /// 发现的蓝牙设备列表，UI会自动响应此数组的变化
     @Published var discoveredDevices: [BluetoothDevice] = []
     
@@ -799,8 +805,6 @@ extension BLEViewModel: BLEAssistDelegate {
         }
     }
 
-    private var serialNumberFrames: [ParsedFrame] = []
-
     private func handleSerialNumberFrame(_ frame: ParsedFrame) {
         serialNumberFrames.append(frame)
         if serialNumberFrames.count == 2 {
@@ -808,10 +812,6 @@ extension BLEViewModel: BLEAssistDelegate {
             serialNumberFrames.removeAll()
         }
     }
-
-    private var heartRateHistoryFrames: [ParsedFrame] = []
-    private var bloodOxygenHistoryFrames: [ParsedFrame] = []
-    private var stepCountHistoryFrames: [ParsedFrame] = []
 
     private func handleHeartRateHistoryFrame(_ frame: ParsedFrame) {
         heartRateHistoryFrames.append(frame)
@@ -903,8 +903,7 @@ extension BLEViewModel: BLEAssistDelegate {
     }
 
     // MARK: - 向 FFE3 写入数据包
-    }
-    
+
     /// 向 FFE3 写入数据包
     /// - Parameters:
     ///   - data: 要写入的原始字节
@@ -1034,33 +1033,7 @@ extension BLEViewModel: BLEAssistDelegate {
     }
 
     // MARK: - 健康数据存储方法
-    
-    /// 将BLE读取的健康数据保存到数据库
-    /// - Parameter healthData: 解析后的健康数据
-    private func saveHealthDataToDatabase(_ healthData: BLEHealthData) {
-        // 确保在后台线程进行数据库操作，避免阻塞UI
-        DispatchQueue.global(qos: .utility).async {
-            // 使用智能存储策略，避免频繁保存相似数据
-            let success = self.healthDataStorage.saveHealthData(
-                heartRate: healthData.heartRate,
-                bloodOxygen: healthData.bloodOxygen,
-                timestamp: Date(),
-                strategy: .smart // 使用智能策略
-            )
-            
-            if success {
-                DispatchQueue.main.async {
-                    print("健康数据已保存到数据库（智能策略）")
-                    // 可以在这里发送通知给UI更新
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("HealthDataSaved"),
-                        object: healthData
-                    )
-                }
-            }
-        }
-    }
-    
+
     /// 获取指定日期的健康数据
     /// - Parameter date: 查询日期
     /// - Returns: 该日期的健康数据列表

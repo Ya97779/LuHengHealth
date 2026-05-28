@@ -353,10 +353,67 @@ struct DeviceDetailViewMini: View {
                     }
                 }
 
+                // 序列号分区
+                Section("序列号") {
+                    if let sn = viewModel.serialNumber {
+                        HStack {
+                            Image(systemName: "number")
+                                .foregroundColor(.teal)
+                                .font(.title3)
+                            Text(sn)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.primary)
+                        }
+                    } else {
+                        Button("读取序列号") {
+                            viewModel.requestSerialNumber()
+                        }
+                    }
+                }
 
+                // 灯光参数分区
+                Section("灯光参数") {
+                    HStack {
+                        Circle()
+                            .fill(Color(
+                                red: Double(viewModel.lightRed) / 255,
+                                green: Double(viewModel.lightGreen) / 255,
+                                blue: Double(viewModel.lightBlue) / 255
+                            ))
+                            .frame(width: 30, height: 30)
+                            .overlay(
+                                Circle().stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                            )
+                        Text("R:\(viewModel.lightRed) G:\(viewModel.lightGreen) B:\(viewModel.lightBlue)")
+                            .font(.system(.caption, design: .monospaced))
+                        Spacer()
+                        Text("亮度:\(viewModel.lightBrightness)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    HStack {
+                        Text("呼吸灯")
+                            .font(.subheadline)
+                        Spacer()
+                        Text(viewModel.lightBreathing ? "开启" : "关闭")
+                            .font(.subheadline)
+                            .foregroundColor(viewModel.lightBreathing ? .green : .secondary)
+                    }
+                    Button("刷新灯光参数") {
+                        viewModel.requestLightParams()
+                    }
+                }
             }
             .navigationTitle("设备详情") // 导航标题
             .navigationBarTitleDisplayMode(.inline) // 标题紧凑显示
+        }
+        .onAppear {
+            viewModel.requestAllData()
+        }
+        .alert("设备告警", isPresented: $viewModel.showAlarm) {
+            Button("确认", role: .cancel) { }
+        } message: {
+            Text(viewModel.alarmMessage ?? "未知告警")
         }
     }
 }
