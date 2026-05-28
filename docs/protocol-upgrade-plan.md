@@ -493,7 +493,7 @@ Section("序列号") {
 
 // 告警信息
 if viewModel.showAlarm, let msg = viewModel.alarmMessage {
-    Section("⚠️ 告警") {
+    Section("告警") {
         Text(msg).foregroundColor(.red)
         Button("关闭") { viewModel.showAlarm = false }
     }
