@@ -147,10 +147,12 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = C492CBA12E6EC274005BD618 /* Build configuration list for PBXNativeTarget "LuHengHealth" */;
 			buildPhases = (
+				C492CBBB00000001 /* Handle WCHBLELibrary for Simulator */,
 				C492CB772E6EC272005BD618 /* Sources */,
 				C492CB782E6EC272005BD618 /* Frameworks */,
 				C492CB792E6EC272005BD618 /* Resources */,
 				C492CBB32E6EC33A005BD618 /* Embed Frameworks */,
+				C492CBBB00000002 /* Restore WCHBLELibrary after Build */,
 			);
 			buildRules = (
 			);
@@ -280,6 +282,37 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		C492CBBB00000001 /* Handle WCHBLELibrary for Simulator */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Handle WCHBLELibrary for Simulator";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "FW=\"${PROJECT_DIR}/${TARGET_NAME}/WCHBLELibrary.framework/WCHBLELibrary\"\nBACKUP=\"${FW}.device_backup\"\nif [ \"${PLATFORM_NAME}\" = \"iphonesimulator\" ]; then\n    if [ -f \"$FW\" ] && [ ! -f \"$BACKUP\" ]; then\n        cp \"$FW\" \"$BACKUP\"\n        xcrun vtool -set-build-version iossim ${IPHONEOS_DEPLOYMENT_TARGET} ${IPHONEOS_DEPLOYMENT_TARGET} -replace -output \"$FW\" \"$BACKUP\"\n    fi\nelse\n    if [ -f \"$BACKUP\" ]; then\n        mv \"$BACKUP\" \"$FW\"\n    fi\nfi\n";
+		};
+		C492CBBB00000002 /* Restore WCHBLELibrary after Build */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Restore WCHBLELibrary after Build";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "FW=\"${PROJECT_DIR}/${TARGET_NAME}/WCHBLELibrary.framework/WCHBLELibrary\"\nBACKUP=\"${FW}.device_backup\"\nif [ -f \"$BACKUP\" ]; then\n    mv \"$BACKUP\" \"$FW\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		C492CB772E6EC272005BD618 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -355,7 +388,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -418,7 +451,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;

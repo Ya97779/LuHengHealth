@@ -10,9 +10,52 @@
 
 import Foundation
 import CoreBluetooth
+
+#if !targetEnvironment(simulator)
 import WCHBLELibrary
+#else
+// 模拟器环境下的WCHBLEManager空实现
+class WCHBLEManager: NSObject {
+    weak var delegate: BLEAssistDelegate?
+    var isDebug: Bool = false
+    var serviceUUIDS: [CBUUID]?
+    
+    private static let instance = WCHBLEManager()
+    
+    static func getInstance() -> WCHBLEManager {
+        return instance
+    }
+    
+    func startScan(_ serviceUUIDs: [CBUUID]?, options: [String: Any]?) {
+        print("[模拟器] WCHBLEManager.startScan - 蓝牙功能在模拟器上不可用")
+    }
+    
+    func stopScan() {
+        print("[模拟器] WCHBLEManager.stopScan")
+    }
+    
+    func connect(_ peripheral: CBPeripheral?) {
+        print("[模拟器] WCHBLEManager.connect - 蓝牙功能在模拟器上不可用")
+    }
+    
+    func disconnect(_ peripheral: CBPeripheral?) {
+        print("[模拟器] WCHBLEManager.disconnect")
+    }
+    
+    func readLog() -> [Any] {
+        return []
+    }
+}
 
-
+@objc protocol BLEAssistDelegate: AnyObject {
+    @objc optional func bleManagerDidUpdateState(_ error: Error?)
+    @objc optional func bleManagerDidDiscover(_ peripheral: CBPeripheral?, advertisementData: [String: Any]?, rssi RSSI: NSNumber?)
+    @objc optional func bleManagerDidPeripheralConnectUpateState(_ peripheral: CBPeripheral?, error: Error?)
+    @objc optional func bleManagerPeriphearl(_ peripheral: CBPeripheral?, services: [CBService]?, error: Error?)
+    @objc optional func bleManagerService(_ service: CBService?, characteristics: [CBCharacteristic]?, error: Error?)
+    @objc optional func bleManagerUpdateValue(forCharacteristic peripheral: CBPeripheral?, characteristic: CBCharacteristic?, error: Error?)
+}
+#endif
 
 
 // MARK: - 设备连接状态枚举
