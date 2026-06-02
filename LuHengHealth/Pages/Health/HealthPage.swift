@@ -10,6 +10,7 @@ import SwiftUI
 struct HealthPage: View {
     @State private var showBloodOxygenDetail = false
     @State private var showHeartRateDetail = false
+    @State private var showStepCountDetail = false
     @State private var showStorageSettings = false
     @State private var showTestTool = false
     @State private var showCalendar = false
@@ -239,26 +240,68 @@ struct HealthPage: View {
                         }
                         .padding(.horizontal)
                         
-                        HStack(spacing: 15) {
-                            // 心率卡片
+                        VStack(spacing: 15) {
+                            // 第一排：心率 + 血氧
+                            HStack(spacing: 15) {
+                                // 心率卡片
+                                HealthDataCard(
+                                    title: "心率",
+                                    value: getDisplayHeartRate(),
+                                    range: "40-160bpm",
+                                    icon: "waveform.path.ecg",
+                                    color: .red,
+                                    progress: Double(getDisplayHeartRateValue()) / 100,
+                                    action: { showHeartRateDetail = true }
+                                )
+                                // 血氧卡片
+                                HealthDataCard(
+                                    title: "血氧",
+                                    value: getDisplayBloodOxygen(),
+                                    range: "94-100",
+                                    icon: "heart.fill",
+                                    color: .green,
+                                    progress: Double(getDisplayBloodOxygenValue()) / 100,
+                                    action: { showBloodOxygenDetail = true }
+                                )
+                            }
+                            
+                            // 第二排：步数（宽度与心率+血氧之和相同）
                             HealthDataCard(
+                                title: "步数",
+                                value: getDisplayStepCount(),
+                                range: "目标10000步",
+                                icon: "heart.fill",
+                                color: .orange,
+                                progress: getDisplayStepCountProgress(),
+                                action: { showStepCountDetail = true }
+                            )
+                        }
+                        .padding(.horizontal)
+                        
+                        // 轮询控制按钮
+                        HStack(spacing: 15) {
+                            PollingButton(
                                 title: "心率",
-                                value: getDisplayHeartRate(),
-                                range: "40-160bpm",
                                 icon: "waveform.path.ecg",
                                 color: .red,
-                                progress: Double(getDisplayHeartRateValue()) / 100,
-                                action: { showHeartRateDetail = true }
+                                isPolling: viewModel.isHeartRatePolling,
+                                action: { viewModel.toggleHeartRatePolling() }
                             )
-                            // 血氧卡片
-                            HealthDataCard(
+                            
+                            PollingButton(
                                 title: "血氧",
-                                value: getDisplayBloodOxygen(),
-                                range: "94-100",
                                 icon: "heart.fill",
                                 color: .green,
-                                progress: Double(getDisplayBloodOxygenValue()) / 100,
-                                action: { showBloodOxygenDetail = true }
+                                isPolling: viewModel.isBloodOxygenPolling,
+                                action: { viewModel.toggleBloodOxygenPolling() }
+                            )
+                            
+                            PollingButton(
+                                title: "步数",
+                                icon: "figure.walk",
+                                color: .orange,
+                                isPolling: viewModel.isStepCountPolling,
+                                action: { viewModel.toggleStepCountPolling() }
                             )
                         }
                         .padding(.horizontal)
@@ -390,6 +433,28 @@ struct HealthPage: View {
         }
         return 0
     }
+    
+    /// 获取显示的步数值
+    private func getDisplayStepCount() -> String {
+        if let connectedDevice = viewModel.connectedDevices.first,
+           let stepCount = viewModel.stepCount, stepCount > 0 {
+            return "\(stepCount)步"
+        }
+        else {
+            return "0步"
+        }
+    }
+    
+    /// 获取步数进度值 (0.0 ~ 1.0)
+    /// 目标: 10000步 (WHO推荐每日步数)
+    private func getDisplayStepCountProgress() -> Double {
+        let stepGoal = 10000.0
+        if let connectedDevice = viewModel.connectedDevices.first,
+           let stepCount = viewModel.stepCount, stepCount > 0 {
+            return min(Double(stepCount) / stepGoal, 1.0)
+        }
+        return 0.0
+    }
 }
 
 // MARK: - 健康数据卡片组件
@@ -444,6 +509,44 @@ struct HealthDataCard: View {
                 }
                     .padding()
             )
+    }
+}
+
+// MARK: - 轮询控制按钮组件
+struct PollingButton: View {
+    var title: String
+    var icon: String
+    var color: Color
+    var isPolling: Bool
+    var action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .fill(isPolling ? color : Color.gray.opacity(0.3))
+                        .frame(width: 50, height: 50)
+                    
+                    Image(systemName: icon)
+                        .font(.system(size: 20))
+                        .foregroundColor(isPolling ? .white : .gray)
+                }
+                
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(isPolling ? color : .gray)
+                
+                Text(isPolling ? "采集中" : "点击采集")
+                    .font(.caption2)
+                    .foregroundColor(isPolling ? .green : .gray)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color.white.opacity(0.8))
+            .cornerRadius(12)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

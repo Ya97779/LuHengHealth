@@ -65,51 +65,22 @@ struct HistoryTimeFrame {
     }
 }
 
-// MARK: - 灯光颜色参数帧
-struct LightColorFrame {
+// MARK: - 灯光参数帧 (合并颜色和亮度)
+struct LightParamsFrame {
     let slot: UInt8
     let r: UInt8
     let g: UInt8
     let b: UInt8
     let currentSlot: UInt8
-}
-
-// MARK: - 灯光亮度参数帧
-struct LightBrightnessFrame {
-    let slot: UInt8
     let brightness: UInt16
     let breathing: Bool
-    let direction: UInt8
 }
 
-// MARK: - 序列号帧数据
-struct SerialNumberFrame {
-    let isFirstFrame: Bool   // true=第一帧(前4字节), false=第二帧(后4字节)
-    let bytes: [UInt8]
-}
-
-// MARK: - 历史记录数据
-struct HistoryDataFrame {
-    let minValue: UInt8
-    let maxValue: UInt8
-}
-
-// MARK: - 多帧数据缓冲区
-struct MultiFrameBuffer {
-    private var buffer: [UInt8: [ParsedFrame]] = [:]
-    private let timeout: TimeInterval = 2.0
-
-    mutating func addFrame(_ frame: ParsedFrame) {
-        buffer[frame.cmd, default: []].append(frame)
-    }
-
-    mutating func getFrames(for cmd: UInt8) -> [ParsedFrame]? {
-        return buffer.removeValue(forKey: cmd)
-    }
-
-    mutating func clear() {
-        buffer.removeAll()
-    }
+// MARK: - 健康异常阈值
+struct HealthAnomalyThresholds {
+    let heartRateLow: UInt8
+    let heartRateHigh: UInt8
+    let bloodOxygenLow: UInt8
 }
 
 // MARK: - 蓝牙协议解析器
@@ -134,10 +105,6 @@ class BLEProtocolParser {
 
     static let shared = BLEProtocolParser()
     private init() {}
-
-    // MARK: - 多帧缓冲区
-
-    private var multiFrameBuffer = MultiFrameBuffer()
 
     // MARK: - 帧解析入口
 
@@ -173,9 +140,14 @@ class BLEProtocolParser {
         if bytes[0] == Self.responseFrameHeader1 && bytes[1] == Self.responseFrameHeader2 {
             return .responseFrame
         } else if bytes[0] == Self.ackFrameHeader1 && bytes[1] == Self.ackFrameHeader2 {
+            // 区分普通ACK和OTA ACK：OTA ACK的CMD是0x40/0x90/0x91/0x92
+            if bytes.count >= 4 {
+                let cmd = bytes[3]
+                if cmd == 0x40 || cmd == 0x90 || cmd == 0x91 || cmd == 0x92 {
+                    return .otaAck
+                }
+            }
             return .ackFrame
-        } else if bytes[0] == Self.otaFrameHeader {
-            return .otaAck
         }
         return .unknown
     }
@@ -183,21 +155,26 @@ class BLEProtocolParser {
     // MARK: - 返回帧解析
 
     private func parseResponseFrame(_ bytes: [UInt8]) -> ParsedFrame {
-        // 格式: AA 56 LEN CMD DATA[LEN] CHECK 56 AA
+        // 格式: AA 56 LEN CMD DATA[N] CHECK 56 AA
+        // LEN字段值N = LEN(1) + CMD(1) + DATA(N-3) + CHECK(1)，包含LEN字节本身
+        // 例如: AA 56 08 03 00 00 00 00 00 0B 56 AA → N=8, DATA=5字节
         guard bytes.count >= 6 else {
             return ParsedFrame(type: .responseFrame, cmd: 0, data: [], isValid: false, originalCmd: nil, status: nil)
         }
 
-        let length = bytes[2]
+        let length = bytes[2]  // LEN字段值，包含LEN+CMD+DATA+CHECK
         let cmd = bytes[3]
-        let expectedTotalLength = 6 + Int(length) + 1 + 1  // 帧头2 + 长度1 + CMD1 + 数据LEN + 校验1 + 帧尾2
+        let dataLength = Int(length) - 3  // 实际数据长度 = LEN - LEN字节 - CMD - CHECK
+        let expectedTotalLength = Int(length) + 4  // 帧头(2) + LEN值 + 帧尾(2)
 
-        guard bytes.count >= expectedTotalLength else {
+        guard dataLength >= 0 && bytes.count >= expectedTotalLength else {
             return ParsedFrame(type: .responseFrame, cmd: cmd, data: [], isValid: false, originalCmd: nil, status: nil)
         }
 
-        let dataEndIndex = 4 + Int(length) - 1
-        let checksumIndex = dataEndIndex + 1
+        // 索引计算: [0]=AA [1]=56 [2]=LEN [3]=CMD [4..4+dataLength-1]=DATA [4+dataLength]=CHECK [4+dataLength+1]=56 [4+dataLength+2]=AA
+        let dataIndexStart = 4
+        let dataIndexEnd = dataIndexStart + dataLength - 1
+        let checksumIndex = dataIndexEnd + 1
         let footerIndex1 = checksumIndex + 1
         let footerIndex2 = checksumIndex + 2
 
@@ -207,22 +184,23 @@ class BLEProtocolParser {
             return ParsedFrame(type: .responseFrame, cmd: cmd, data: [], isValid: false, originalCmd: nil, status: nil)
         }
 
-        // 验证校验和
-        let calculatedChecksum = calculateChecksum(Array(bytes[0...dataEndIndex]))
+        // 验证校验和 (从帧头到数据区结束)
+        let calculatedChecksum = calculateChecksum(Array(bytes[0...dataIndexEnd]))
         guard bytes[checksumIndex] == calculatedChecksum else {
-            print("校验和不匹配: 计算=\(String(format: "%02X", calculatedChecksum)), 实际=\(String(format: "%02X", bytes[checksumIndex]))")
+            print("[BLE] 校验和不匹配: 计算=\(String(format: "%02X", calculatedChecksum)), 实际=\(String(format: "%02X", bytes[checksumIndex]))")
             return ParsedFrame(type: .responseFrame, cmd: cmd, data: [], isValid: false, originalCmd: nil, status: nil)
         }
 
-        let payload = Array(bytes[4...dataEndIndex])
+        let payload = Array(bytes[dataIndexStart...dataIndexEnd])
         return ParsedFrame(type: .responseFrame, cmd: cmd, data: payload, isValid: true, originalCmd: nil, status: nil)
     }
 
     // MARK: - ACK帧解析
 
     private func parseAckFrame(_ bytes: [UInt8]) -> ParsedFrame {
-        // 格式: AA 57 05 7F 原CMD STATUS 00 00 00 CHECK 57 AA
-        guard bytes.count >= 10 else {
+        // 格式: AA 57 08 7F 原CMD STATUS 00 00 00 CHECK 57 AA
+        // 索引:  [0]=AA [1]=57 [2]=08 [3]=7F [4]=CMD [5]=STATUS [6]=00 [7]=00 [8]=00 [9]=CHECK [10]=57 [11]=AA
+        guard bytes.count >= 12 else {
             return ParsedFrame(type: .ackFrame, cmd: 0x7F, data: [], isValid: false, originalCmd: nil, status: nil)
         }
 
@@ -232,18 +210,19 @@ class BLEProtocolParser {
         let status = bytes[5]
 
         // 验证固定字节
-        guard length == 0x05 && cmd == 0x7F && bytes[6] == 0x00 && bytes[7] == 0x00 && bytes[8] == 0x00 else {
+        guard length == 0x08 && cmd == 0x7F && bytes[6] == 0x00 && bytes[7] == 0x00 && bytes[8] == 0x00 else {
             return ParsedFrame(type: .ackFrame, cmd: cmd, data: [], isValid: false, originalCmd: originalCmd, status: status)
         }
 
-        // 验证帧尾
-        guard bytes[9] == Self.ackFrameFooter1 && bytes[10] == Self.ackFrameFooter2 else {
+        // 验证帧尾 (索引 10 和 11)
+        guard bytes[10] == Self.ackFrameFooter1 && bytes[11] == Self.ackFrameFooter2 else {
             return ParsedFrame(type: .ackFrame, cmd: cmd, data: [], isValid: false, originalCmd: originalCmd, status: status)
         }
 
-        // 验证校验和
+        // 验证校验和 (索引 9)
         let calculatedChecksum = calculateChecksum(Array(bytes[0...8]))
         guard bytes[9] == calculatedChecksum else {
+            print("[BLE] ACK校验和不匹配: 计算=\(String(format: "%02X", calculatedChecksum)), 实际=\(String(format: "%02X", bytes[9]))")
             return ParsedFrame(type: .ackFrame, cmd: cmd, data: [], isValid: false, originalCmd: originalCmd, status: status)
         }
 
@@ -253,20 +232,30 @@ class BLEProtocolParser {
     // MARK: - OTA ACK帧解析
 
     private func parseOtaAckFrame(_ bytes: [UInt8]) -> ParsedFrame {
-        // 格式: A5 CMD STATUS SEQ_H SEQ_L PROGRESS ERR 5A
-        guard bytes.count >= 7 else {
+        // 格式: AA 57 08 CMD STATUS SEQ_H SEQ_L PROGRESS ERR CHECK 57 AA
+        // 索引:  [0]=AA [1]=57 [2]=08 [3]=CMD [4]=STATUS [5]=SEQ_H [6]=SEQ_L [7]=PROGRESS [8]=ERR [9]=CHECK [10]=57 [11]=AA
+        // CMD = 0x40/0x90/0x91/0x92 (OTA相关命令)
+        guard bytes.count >= 12 else {
             return ParsedFrame(type: .otaAck, cmd: 0, data: [], isValid: false, originalCmd: nil, status: nil)
         }
 
-        let cmd = bytes[1]
-        let status = bytes[2]
-        let seqHigh = bytes[3]
-        let seqLow = bytes[4]
-        let progress = bytes[5]
-        let errorCode = bytes[6]
+        let length = bytes[2]
+        let cmd = bytes[3]
+        let status = bytes[4]
+        let seqHigh = bytes[5]
+        let seqLow = bytes[6]
+        let progress = bytes[7]
+        let errorCode = bytes[8]
 
-        // 验证帧尾
-        guard bytes.count >= 8 && bytes[7] == Self.otaFrameFooter else {
+        // 验证长度和帧尾 (索引 10 和 11)
+        guard length == 0x08 && bytes[10] == Self.ackFrameFooter1 && bytes[11] == Self.ackFrameFooter2 else {
+            return ParsedFrame(type: .otaAck, cmd: cmd, data: [], isValid: false, originalCmd: nil, status: status)
+        }
+
+        // 验证校验和 (索引 9)
+        let calculatedChecksum = calculateChecksum(Array(bytes[0...8]))
+        guard bytes[9] == calculatedChecksum else {
+            print("[BLE] OTA ACK校验和不匹配: 计算=\(String(format: "%02X", calculatedChecksum)), 实际=\(String(format: "%02X", bytes[9]))")
             return ParsedFrame(type: .otaAck, cmd: cmd, data: [], isValid: false, originalCmd: nil, status: status)
         }
 
@@ -298,10 +287,11 @@ class BLEProtocolParser {
     }
 
     /// 解析步数返回帧 (CMD 0x03)
-    /// 数据格式: STEP_H STEP_L 00 00 00
+    /// 数据格式: STEP_H STEP_M STEP_L 00 00
+    /// step = STEP_H * 65536 + STEP_M * 256 + STEP_L
     func parseStepCountResponse(_ frame: ParsedFrame) -> Int? {
         guard frame.isValid && frame.cmd == 0x03 && frame.data.count >= 5 else { return nil }
-        return Int(frame.data[0]) << 8 | Int(frame.data[1])
+        return Int(frame.data[0]) << 16 | Int(frame.data[1]) << 8 | Int(frame.data[2])
     }
 
     /// 解析电量返回帧 (CMD 0x04)
@@ -319,32 +309,10 @@ class BLEProtocolParser {
     }
 
     /// 解析序列号返回帧 (CMD 0x06)
-    /// 第一帧: 00 UID0 UID1 UID2 UID3
-    /// 第二帧: 01 UID4 UID5 UID6 UID7
-    func parseSerialNumberResponse(_ frame: ParsedFrame) -> SerialNumberFrame? {
-        guard frame.isValid && frame.cmd == 0x06 && frame.data.count >= 5 else { return nil }
-        let isFirstFrame = frame.data[0] == 0x00
-        let bytes = Array(frame.data[1...4])
-        return SerialNumberFrame(isFirstFrame: isFirstFrame, bytes: bytes)
-    }
-
-    /// 组合解析完整序列号 (需要两帧)
-    func combineSerialNumber(frames: [ParsedFrame]) -> String? {
-        guard frames.count == 2 else { return nil }
-
-        let sortedFrames = frames.sorted { $0.data[0] < $1.data[0] }
-        guard let firstFrame = sortedFrames.first,
-              let secondFrame = sortedFrames.last,
-              firstFrame.data[0] == 0x00,
-              secondFrame.data[0] == 0x01 else {
-            return nil
-        }
-
-        let firstBytes = Array(firstFrame.data[1...4])
-        let secondBytes = Array(secondFrame.data[1...4])
-        let allBytes = firstBytes + secondBytes
-
-        return allBytes.map { String(format: "%02X", $0) }.joined()
+    /// 单帧格式: UID0 UID1 UID2 UID3 UID4 UID5 UID6 UID7 (8字节)
+    func parseSerialNumberResponse(_ frame: ParsedFrame) -> String? {
+        guard frame.isValid && frame.cmd == 0x06 && frame.data.count >= 8 else { return nil }
+        return frame.data.prefix(8).map { String(format: "%02X", $0) }.joined()
     }
 
     /// 解析告警返回帧 (CMD 0x80)
@@ -359,37 +327,45 @@ class BLEProtocolParser {
         )
     }
 
-    /// 解析灯光颜色参数返回帧 (CMD 0x30)
-    /// 数据格式: SS RR GG BB CUR
-    func parseLightColorResponse(_ frame: ParsedFrame) -> LightColorFrame? {
-        guard frame.isValid && frame.cmd == 0x30 && frame.data.count >= 5 else { return nil }
-        return LightColorFrame(
+    /// 解析产品型号返回帧 (CMD 0x0B)
+    /// 数据格式: MODEL 00 00 00 00
+    func parseProductModelResponse(_ frame: ParsedFrame) -> UInt8? {
+        guard frame.isValid && frame.cmd == 0x0B && frame.data.count >= 5 else { return nil }
+        return frame.data[0]
+    }
+
+    /// 解析健康异常阈值返回帧 (CMD 0x0A)
+    /// 数据格式: HR_LOW HR_HIGH SPO2_LOW 00 00
+    func parseHealthAnomalyThresholdsResponse(_ frame: ParsedFrame) -> HealthAnomalyThresholds? {
+        guard frame.isValid && frame.cmd == 0x0A && frame.data.count >= 5 else { return nil }
+        return HealthAnomalyThresholds(
+            heartRateLow: frame.data[0],
+            heartRateHigh: frame.data[1],
+            bloodOxygenLow: frame.data[2]
+        )
+    }
+
+    /// 解析灯光参数返回帧 (CMD 0x30)
+    /// 单帧格式: SS RR GG BB CUR BR_H BR_L BREATH (8字节)
+    func parseLightParamsResponse(_ frame: ParsedFrame) -> LightParamsFrame? {
+        guard frame.isValid && frame.cmd == 0x30 && frame.data.count >= 8 else { return nil }
+        let brightness = UInt16(frame.data[5]) << 8 | UInt16(frame.data[6])
+        let breathing = frame.data[7] == 0x01
+        return LightParamsFrame(
             slot: frame.data[0],
             r: frame.data[1],
             g: frame.data[2],
             b: frame.data[3],
-            currentSlot: frame.data[4]
-        )
-    }
-
-    /// 解析灯光亮度参数返回帧 (CMD 0x31)
-    /// 数据格式: SS BR_H BR_L BREATH DIR
-    func parseLightBrightnessResponse(_ frame: ParsedFrame) -> LightBrightnessFrame? {
-        guard frame.isValid && frame.cmd == 0x31 && frame.data.count >= 5 else { return nil }
-        let brightness = UInt16(frame.data[1]) << 8 | UInt16(frame.data[2])
-        let breathing = frame.data[3] == 0x01
-        return LightBrightnessFrame(
-            slot: frame.data[0],
+            currentSlot: frame.data[4],
             brightness: brightness,
-            breathing: breathing,
-            direction: frame.data[4]
+            breathing: breathing
         )
     }
 
-    /// 解析历史记录时间返回帧 (CMD 0x07/0x08/0x09 第一帧)
-    /// 数据格式: YY MM DD HH MIN
-    func parseHistoryTimeResponse(_ frame: ParsedFrame) -> HistoryTimeFrame? {
-        guard frame.isValid && frame.data.count >= 5 else { return nil }
+    /// 解析心率历史返回帧 (CMD 0x07)
+    /// 单帧格式: YY MM DD HH MIN HR (6字节)
+    func parseHeartRateHistoryResponse(_ frame: ParsedFrame) -> HistoryTimeFrame? {
+        guard frame.isValid && frame.cmd == 0x07 && frame.data.count >= 6 else { return nil }
         return HistoryTimeFrame(
             year: frame.data[0],
             month: frame.data[1],
@@ -399,11 +375,30 @@ class BLEProtocolParser {
         )
     }
 
-    /// 解析历史记录数据返回帧 (CMD 0x07/0x08/0x09 第二帧)
-    /// 数据格式: 80 MIN MAX 00 00
-    func parseHistoryDataResponse(_ frame: ParsedFrame) -> HistoryDataFrame? {
-        guard frame.isValid && frame.data.count >= 5 && frame.data[0] == 0x80 else { return nil }
-        return HistoryDataFrame(minValue: frame.data[1], maxValue: frame.data[2])
+    /// 解析血氧历史返回帧 (CMD 0x08)
+    /// 单帧格式: YY MM DD HH MIN SPO2 (6字节)
+    func parseBloodOxygenHistoryResponse(_ frame: ParsedFrame) -> HistoryTimeFrame? {
+        guard frame.isValid && frame.cmd == 0x08 && frame.data.count >= 6 else { return nil }
+        return HistoryTimeFrame(
+            year: frame.data[0],
+            month: frame.data[1],
+            day: frame.data[2],
+            hour: frame.data[3],
+            minute: frame.data[4]
+        )
+    }
+
+    /// 解析步数历史返回帧 (CMD 0x09)
+    /// 单帧格式: YY MM DD HH MIN STEP_H STEP_L (7字节)
+    func parseStepCountHistoryResponse(_ frame: ParsedFrame) -> HistoryTimeFrame? {
+        guard frame.isValid && frame.cmd == 0x09 && frame.data.count >= 7 else { return nil }
+        return HistoryTimeFrame(
+            year: frame.data[0],
+            month: frame.data[1],
+            day: frame.data[2],
+            hour: frame.data[3],
+            minute: frame.data[4]
+        )
     }
 
     // MARK: - 辅助方法
@@ -420,10 +415,5 @@ class BLEProtocolParser {
             value += Int(byte) << (8 * index)
         }
         return value
-    }
-
-    /// 清空多帧缓冲区
-    func clearBuffer() {
-        multiFrameBuffer.clear()
     }
 }

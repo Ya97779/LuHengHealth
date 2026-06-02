@@ -138,16 +138,32 @@ struct HomePage: View {
                             HStack(alignment: .center, spacing: 20) {
                                 // 颜色轮区域
                                 VStack {
-                                    ColorControlPanel(brightness: $brightnessValue, selectedColor: $ModelColor)
-                                        .offset(x:0 ,y:0)
-                                        .frame(width: geo.size.width * 0.6)
-                                        // 颜色或亮度任意变化，都发送当前值
-                                        .onChange(of: ModelColor) { _ in
-                                            sendCurrentColorWithBrightness()
+                                    ColorControlPanel(
+                                        brightness: $brightnessValue,
+                                        selectedColor: $ModelColor,
+                                        slot0R: $viewModel.slot0R,
+                                        slot0G: $viewModel.slot0G,
+                                        slot0B: $viewModel.slot0B,
+                                        slot1R: $viewModel.slot1R,
+                                        slot1G: $viewModel.slot1G,
+                                        slot1B: $viewModel.slot1B,
+                                        slot2R: $viewModel.slot2R,
+                                        slot2G: $viewModel.slot2G,
+                                        slot2B: $viewModel.slot2B,
+                                        onSlotTapped: { slotIndex in
+                                            // 点击灯光槽按钮时，切换到对应灯光槽
+                                            viewModel.switchLightSlot(slot: slotIndex)
                                         }
-                                        .onChange(of: brightnessValue) { _ in
-                                            sendCurrentColorWithBrightness()
-                                        }
+                                    )
+                                    .offset(x:0 ,y:0)
+                                    .frame(width: geo.size.width * 0.6)
+                                    // 颜色或亮度任意变化，都发送当前值
+                                    .onChange(of: ModelColor) { _ in
+                                        sendCurrentColorWithBrightness()
+                                    }
+                                    .onChange(of: brightnessValue) { _ in
+                                        sendCurrentColorWithBrightness()
+                                    }
                                 }
                                 
                                 // 右侧模式选择

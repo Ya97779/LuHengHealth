@@ -176,18 +176,36 @@ class BLEViewModel: NSObject, ObservableObject {
     @Published var alarmMessage: String? = nil
     @Published var showAlarm: Bool = false
 
-    // 灯光参数回读
+    // 灯光参数回读（当前槽）
     @Published var lightSlot: UInt8 = 0
     @Published var lightRed: UInt8 = 0
     @Published var lightGreen: UInt8 = 0
     @Published var lightBlue: UInt8 = 0
+    @Published var lightCurrentSlot: UInt8 = 0
     @Published var lightBrightness: UInt16 = 0
     @Published var lightBreathing: Bool = false
+
+    // 三个灯光槽的RGB颜色存储
+    @Published var slot0R: UInt8 = 128
+    @Published var slot0G: UInt8 = 128
+    @Published var slot0B: UInt8 = 128
+    @Published var slot1R: UInt8 = 128
+    @Published var slot1G: UInt8 = 128
+    @Published var slot1B: UInt8 = 128
+    @Published var slot2R: UInt8 = 128
+    @Published var slot2G: UInt8 = 128
+    @Published var slot2B: UInt8 = 128
 
     // 历史数据
     @Published var heartRateHistory: HistoryRecord?
     @Published var bloodOxygenHistory: HistoryRecord?
     @Published var stepCountHistory: HistoryRecord?
+
+    // 产品信息
+    @Published var productModel: UInt8? = nil
+
+    // 健康阈值
+    @Published var healthThresholds: HealthAnomalyThresholds? = nil
 
     // ACK状态
     @Published var lastAckCmd: UInt8? = nil
@@ -196,18 +214,17 @@ class BLEViewModel: NSObject, ObservableObject {
     // MARK: - 历史记录结构体
     struct HistoryRecord {
         let year: Int, month: Int, day: Int, hour: Int, minute: Int
-        let minValue: Int, maxValue: Int
+        let value: Int
     }
 
     // MARK: - 轮询定时器
     private var pollingTimer: Timer?
-    private let pollingInterval: TimeInterval = 3.0
+    private let pollingInterval: TimeInterval = 5.0
 
-    // MARK: - 多帧数据缓存
-    private var serialNumberFrames: [ParsedFrame] = []
-    private var heartRateHistoryFrames: [ParsedFrame] = []
-    private var bloodOxygenHistoryFrames: [ParsedFrame] = []
-    private var stepCountHistoryFrames: [ParsedFrame] = []
+    // MARK: - 独立轮询控制
+    @Published var isHeartRatePolling: Bool = false
+    @Published var isBloodOxygenPolling: Bool = false
+    @Published var isStepCountPolling: Bool = false
 
     /// 发现的蓝牙设备列表，UI会自动响应此数组的变化
     @Published var discoveredDevices: [BluetoothDevice] = []
@@ -785,30 +802,44 @@ extension BLEViewModel: BLEAssistDelegate {
     ///   - characteristic: 值发生变化的特征
     ///   - error: 值更新过程中的错误
     func bleManagerUpdateValue(forCharacteristic peripheral: CBPeripheral!, characteristic: CBCharacteristic!, error: (any Error)!) {
-        print("特征值更新: \(characteristic.uuid.uuidString)")
         DispatchQueue.main.async {
                 guard error == nil,
                       let characteristic = characteristic,
-                      let value = characteristic.value else { return }
+                      let value = characteristic.value else {
+                    if let error = error {
+                        print("[BLE] ❌ 特征值更新错误: \(error.localizedDescription)")
+                    }
+                    return
+                }
+
+                let hexStr = BLEProtocolParser.shared.bytesToHexString(value)
+                print("[BLE] 📥 收到 \(characteristic.uuid.uuidString): \(hexStr)")
 
                 self.latestValueByCharacteristic[characteristic.uuid] = value
                 self.valueLogByCharacteristic[characteristic.uuid, default: []].append(value)
 
                 if characteristic.uuid == self.notifyCharUUID {
-                    self.ffe4HexText = BLEProtocolParser.shared.bytesToHexString(value)
+                    self.ffe4HexText = hexStr
 
                     let frame = BLEProtocolParser.shared.parse(value)
 
-                    guard frame.isValid else { return }
+                    if !frame.isValid {
+                        print("[BLE] ⚠️ 帧校验失败: \(hexStr)")
+                        return
+                    }
 
                     switch frame.type {
                     case .responseFrame:
+                        print("[BLE] 📋 返回帧 CMD=0x\(String(format: "%02X", frame.cmd)) 数据=\(BLEProtocolParser.shared.bytesToHexString(Data(frame.data)))")
                         self.handleResponseFrame(frame)
                     case .ackFrame:
+                        print("[BLE] ✅ ACK帧 原CMD=0x\(String(format: "%02X", frame.originalCmd ?? 0)) 状态=\(frame.status == 0x01 ? "成功" : "失败")")
                         self.handleAckFrame(frame)
                     case .otaAck:
+                        print("[BLE] 🔄 OTA ACK帧 CMD=0x\(String(format: "%02X", frame.cmd))")
                         break
                     case .unknown:
+                        print("[BLE] ❓ 未知帧类型: \(hexStr)")
                         break
                     }
                 }
@@ -821,105 +852,156 @@ extension BLEViewModel: BLEAssistDelegate {
         switch frame.cmd {
         case 0x01:
             self.heartRate = BLEProtocolParser.shared.parseHeartRateResponse(frame)
+            print("[BLE] 💓 心率: \(self.heartRate ?? 0) bpm")
         case 0x02:
             self.bloodOxygen = BLEProtocolParser.shared.parseBloodOxygenResponse(frame)
+            print("[BLE] 🩸 血氧: \(self.bloodOxygen ?? 0)%")
         case 0x03:
             self.stepCount = BLEProtocolParser.shared.parseStepCountResponse(frame)
+            print("[BLE] 🚶 步数: \(self.stepCount ?? 0) 步")
         case 0x04:
             self.batteryVoltage = BLEProtocolParser.shared.parseBatteryLevelResponse(frame)
+            print("[BLE] 🔋 电量: \(self.batteryVoltage ?? 0)%")
         case 0x05:
             self.firmwareVersion = BLEProtocolParser.shared.parseFirmwareVersionResponse(frame)
+            let v = self.firmwareVersion ?? 0
+            print("[BLE] 📦 固件版本: v\(v / 10).\(v % 10)")
         case 0x06:
-            handleSerialNumberFrame(frame)
+            self.serialNumber = BLEProtocolParser.shared.parseSerialNumberResponse(frame)
+            print("[BLE] 🔢 序列号: \(self.serialNumber ?? "无")")
         case 0x07:
             handleHeartRateHistoryFrame(frame)
         case 0x08:
             handleBloodOxygenHistoryFrame(frame)
         case 0x09:
             handleStepCountHistoryFrame(frame)
+        case 0x0A:
+            self.healthThresholds = BLEProtocolParser.shared.parseHealthAnomalyThresholdsResponse(frame)
+            if let t = self.healthThresholds {
+                print("[BLE] ⚙️ 健康阈值: 心率[\(t.heartRateLow)-\(t.heartRateHigh)] 血氧[\(t.bloodOxygenLow)]")
+            }
+        case 0x0B:
+            self.productModel = BLEProtocolParser.shared.parseProductModelResponse(frame)
+            print("[BLE] 🏷️ 产品型号: \(self.productModel ?? 0)")
         case 0x30:
-            handleLightColorResponse(frame)
-        case 0x31:
-            handleLightBrightnessResponse(frame)
+            handleLightParamsResponse(frame)
         case 0x80:
             handleAlarm(frame)
         default:
+            print("[BLE] ❓ 未处理的返回帧 CMD=0x\(String(format: "%02X", frame.cmd))")
             break
         }
     }
 
-    private func handleSerialNumberFrame(_ frame: ParsedFrame) {
-        serialNumberFrames.append(frame)
-        if serialNumberFrames.count == 2 {
-            self.serialNumber = BLEProtocolParser.shared.combineSerialNumber(frames: serialNumberFrames)
-            serialNumberFrames.removeAll()
-        }
-    }
-
     private func handleHeartRateHistoryFrame(_ frame: ParsedFrame) {
-        heartRateHistoryFrames.append(frame)
-        if heartRateHistoryFrames.count == 2 {
-            if let timeFrame = BLEProtocolParser.shared.parseHistoryTimeResponse(heartRateHistoryFrames[0]),
-               let dataFrame = BLEProtocolParser.shared.parseHistoryDataResponse(heartRateHistoryFrames[1]) {
-                self.heartRateHistory = HistoryRecord(
-                    year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
-                    hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
-                    minValue: Int(dataFrame.minValue), maxValue: Int(dataFrame.maxValue)
-                )
-            }
-            heartRateHistoryFrames.removeAll()
+        if let timeFrame = BLEProtocolParser.shared.parseHeartRateHistoryResponse(frame) {
+            let hr = Int(frame.data[5])
+            self.heartRateHistory = HistoryRecord(
+                year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
+                hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
+                value: hr
+            )
+            print("[BLE] 📊 心率历史: \(timeFrame.dateString) = \(hr) bpm")
         }
     }
 
     private func handleBloodOxygenHistoryFrame(_ frame: ParsedFrame) {
-        bloodOxygenHistoryFrames.append(frame)
-        if bloodOxygenHistoryFrames.count == 2 {
-            if let timeFrame = BLEProtocolParser.shared.parseHistoryTimeResponse(bloodOxygenHistoryFrames[0]),
-               let dataFrame = BLEProtocolParser.shared.parseHistoryDataResponse(bloodOxygenHistoryFrames[1]) {
-                self.bloodOxygenHistory = HistoryRecord(
-                    year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
-                    hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
-                    minValue: Int(dataFrame.minValue), maxValue: Int(dataFrame.maxValue)
-                )
-            }
-            bloodOxygenHistoryFrames.removeAll()
+        if let timeFrame = BLEProtocolParser.shared.parseBloodOxygenHistoryResponse(frame) {
+            let spo2 = Int(frame.data[5])
+            self.bloodOxygenHistory = HistoryRecord(
+                year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
+                hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
+                value: spo2
+            )
+            print("[BLE] 📊 血氧历史: \(timeFrame.dateString) = \(spo2)%")
         }
     }
 
     private func handleStepCountHistoryFrame(_ frame: ParsedFrame) {
-        stepCountHistoryFrames.append(frame)
-        if stepCountHistoryFrames.count == 2 {
-            if let timeFrame = BLEProtocolParser.shared.parseHistoryTimeResponse(stepCountHistoryFrames[0]),
-               let dataFrame = BLEProtocolParser.shared.parseHistoryDataResponse(stepCountHistoryFrames[1]) {
-                self.stepCountHistory = HistoryRecord(
-                    year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
-                    hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
-                    minValue: Int(dataFrame.minValue), maxValue: Int(dataFrame.maxValue)
-                )
+        if let timeFrame = BLEProtocolParser.shared.parseStepCountHistoryResponse(frame) {
+            let steps = Int(frame.data[5]) << 8 | Int(frame.data[6])
+            self.stepCountHistory = HistoryRecord(
+                year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
+                hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
+                value: steps
+            )
+            print("[BLE] 📊 步数历史: \(timeFrame.dateString) = \(steps) 步")
+        }
+    }
+
+    private func handleLightParamsResponse(_ frame: ParsedFrame) {
+        if let lightParams = BLEProtocolParser.shared.parseLightParamsResponse(frame) {
+            self.lightSlot = lightParams.slot
+            self.lightRed = lightParams.r
+            self.lightGreen = lightParams.g
+            self.lightBlue = lightParams.b
+            self.lightCurrentSlot = lightParams.currentSlot
+            self.lightBrightness = lightParams.brightness
+            self.lightBreathing = lightParams.breathing
+
+            // 更新对应灯光槽的RGB值
+            switch lightParams.slot {
+            case 0:
+                self.slot0R = lightParams.r
+                self.slot0G = lightParams.g
+                self.slot0B = lightParams.b
+            case 1:
+                self.slot1R = lightParams.r
+                self.slot1G = lightParams.g
+                self.slot1B = lightParams.b
+            case 2:
+                self.slot2R = lightParams.r
+                self.slot2G = lightParams.g
+                self.slot2B = lightParams.b
+            default: break
             }
-            stepCountHistoryFrames.removeAll()
+
+            print("[BLE] 💡 灯光参数: 槽=\(lightParams.slot) 当前槽=\(lightParams.currentSlot) RGB=(\(lightParams.r),\(lightParams.g),\(lightParams.b)) 亮度=\(lightParams.brightness) 呼吸=\(lightParams.breathing)")
         }
     }
 
-    private func handleLightColorResponse(_ frame: ParsedFrame) {
-        if let lightColor = BLEProtocolParser.shared.parseLightColorResponse(frame) {
-            self.lightSlot = lightColor.slot
-            self.lightRed = lightColor.r
-            self.lightGreen = lightColor.g
-            self.lightBlue = lightColor.b
-        }
-    }
-
-    private func handleLightBrightnessResponse(_ frame: ParsedFrame) {
-        if let lightBrightness = BLEProtocolParser.shared.parseLightBrightnessResponse(frame) {
-            self.lightBrightness = lightBrightness.brightness
-            self.lightBreathing = lightBrightness.breathing
-        }
+    /// 请求所有灯光槽参数
+    func requestAllLightSlotParams() {
+        requestLightParams(slot: 0x00)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.requestLightParams(slot: 0x01) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.requestLightParams(slot: 0x02) }
     }
 
     private func handleAckFrame(_ frame: ParsedFrame) {
         self.lastAckCmd = frame.originalCmd
         self.lastAckStatus = frame.status
+        let cmdName = cmdNameForLog(frame.originalCmd ?? 0)
+        let statusStr = frame.status == 0x01 ? "✅成功" : "❌失败"
+        print("[BLE] 📤 ACK: \(cmdName) \(statusStr)")
+    }
+
+    private func cmdNameForLog(_ cmd: UInt8) -> String {
+        switch cmd {
+        case 0x11: return "读取心率"
+        case 0x12: return "读取血氧"
+        case 0x13: return "读取步数"
+        case 0x14: return "读取电量"
+        case 0x15: return "读取固件版本"
+        case 0x16: return "读取序列号"
+        case 0x17: return "读取心率历史"
+        case 0x18: return "读取血氧历史"
+        case 0x19: return "读取步数历史"
+        case 0x1B: return "读取产品型号"
+        case 0x21: return "设置灯光颜色"
+        case 0x22: return "设置灯光亮度"
+        case 0x23: return "设置呼吸灯"
+        case 0x24: return "切换灯光槽"
+        case 0x25: return "设置心率低阈值"
+        case 0x26: return "设置心率高阈值"
+        case 0x27: return "设置血氧低阈值"
+        case 0x28: return "读取健康阈值"
+        case 0x30: return "读取灯光参数"
+        case 0x40: return "进入OTA模式"
+        case 0x90: return "OTA开始"
+        case 0x91: return "OTA数据包"
+        case 0x92: return "OTA结束"
+        default: return "CMD=0x\(String(format: "%02X", cmd))"
+        }
     }
 
     // MARK: - 告警处理
@@ -942,6 +1024,7 @@ extension BLEViewModel: BLEAssistDelegate {
         default:
             self.alarmMessage = "设备告警：代码=\(alarm.alarmCode)"
         }
+        print("[BLE] 🚨 告警: \(self.alarmMessage ?? "未知")")
         self.showAlarm = true
     }
 
@@ -990,6 +1073,8 @@ extension BLEViewModel: BLEAssistDelegate {
     ///   - data: 数据区字节数组
     func sendCommand(_ cmd: UInt8, data: [UInt8] = []) {
         let frame = BLECommandBuilder.buildWriteFrame(cmd: cmd, data: data)
+        let cmdName = cmdNameForLog(cmd)
+        print("[BLE] 📤 发送: \(cmdName)")
         writeToFFE3(frame)
     }
 
@@ -1024,10 +1109,34 @@ extension BLEViewModel: BLEAssistDelegate {
 
     func switchLightSlot(slot: UInt8) {
         sendCommand(0x24, data: [slot])
+        // 切换灯光槽后，延迟获取对应灯光槽的参数
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.requestLightParams(slot: slot)
+        }
     }
 
     func requestLightParams(slot: UInt8 = 0xFF) {
         sendCommand(0x30, data: [slot])
+    }
+
+    // MARK: - 产品信息命令
+
+    func requestProductModel() { sendCommand(0x1B) }
+
+    // MARK: - 健康阈值命令
+
+    func requestHealthAnomalyThresholds() { sendCommand(0x28) }
+
+    func setHeartRateLowThreshold(_ threshold: UInt8) {
+        sendCommand(0x25, data: [threshold, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func setHeartRateHighThreshold(_ threshold: UInt8) {
+        sendCommand(0x26, data: [threshold, 0x00, 0x00, 0x00, 0x00])
+    }
+
+    func setBloodOxygenLowThreshold(_ threshold: UInt8) {
+        sendCommand(0x27, data: [threshold, 0x00, 0x00, 0x00, 0x00])
     }
 
     // MARK: - 批量读取
@@ -1039,6 +1148,16 @@ extension BLEViewModel: BLEAssistDelegate {
         requestBatteryLevel()
         requestFirmwareVersion()
         requestLightParams()
+    }
+
+    /// 延迟批量读取（避免命令堆积）
+    /// 连接时只获取设备信息，不获取心率血氧步数（需要用户手动触发）
+    private func requestAllDataWithDelay() {
+        requestBatteryLevel()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.requestFirmwareVersion() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.requestLightParams() }
+        // 请求三个灯光槽的颜色参数
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.requestAllLightSlotParams() }
     }
 
     // MARK: - 旧接口兼容
@@ -1055,24 +1174,66 @@ extension BLEViewModel: BLEAssistDelegate {
         setBreathingLight(enabled: breathing)
         setLightColor(slot: 0xFF, r: red, g: green, b: blue)
         setLightBrightness(slot: 0xFF, brightness: brightness)
+        
+        // 设置颜色后，延迟读取当前灯光槽参数（用于更新按钮颜色）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.requestLightParams(slot: 0xFF)
+        }
     }
 
     // MARK: - 自动轮询定时器
 
     private func startPolling() {
         stopPolling()
+        // 连接时先请求一次全量数据（带延迟避免命令堆积）
+        requestAllDataWithDelay()
+        // 启动轮询
         pollingTimer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
-            self?.requestHeartRate()
-            self?.requestBloodOxygen()
-            self?.requestStepCount()
-            self?.requestBatteryLevel()
+            guard let self = self else { return }
+            // 根据独立开关控制是否轮询
+            if self.isHeartRatePolling {
+                self.requestHeartRate()
+            }
+            if self.isBloodOxygenPolling {
+                self.requestBloodOxygen()
+            }
+            if self.isStepCountPolling {
+                self.requestStepCount()
+            }
+            // 电量一直轮询
+            self.requestBatteryLevel()
         }
-        requestAllData()
     }
 
     private func stopPolling() {
         pollingTimer?.invalidate()
         pollingTimer = nil
+    }
+
+    // MARK: - 轮询控制方法
+
+    /// 切换心率轮询状态
+    func toggleHeartRatePolling() {
+        isHeartRatePolling.toggle()
+        if isHeartRatePolling {
+            requestHeartRate()
+        }
+    }
+
+    /// 切换血氧轮询状态
+    func toggleBloodOxygenPolling() {
+        isBloodOxygenPolling.toggle()
+        if isBloodOxygenPolling {
+            requestBloodOxygen()
+        }
+    }
+
+    /// 切换步数轮询状态
+    func toggleStepCountPolling() {
+        isStepCountPolling.toggle()
+        if isStepCountPolling {
+            requestStepCount()
+        }
     }
 
     // MARK: - 健康数据存储方法

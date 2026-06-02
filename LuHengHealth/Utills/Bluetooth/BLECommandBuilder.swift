@@ -29,15 +29,24 @@ class BLECommandBuilder {
 
     // MARK: - 通用写入帧构建
 
-    /// 构建通用写入帧: AA 55 LEN CMD DATA[LEN] CHECK 55 AA
+    /// 标准数据区长度（协议规定所有标准命令固定为5字节）
+    static let standardDataLength: Int = 5
+
+    /// 构建标准写入帧: AA 55 08 CMD DATA[5] CHECK 55 AA
     /// - Parameters:
     ///   - cmd: 命令码
-    ///   - data: 数据区字节数组
+    ///   - data: 数据区字节数组（不足5字节自动补0x00）
     /// - Returns: 完整的帧数据
     static func buildWriteFrame(cmd: UInt8, data: [UInt8] = []) -> Data {
-        let length = UInt8(data.count)
+        // 数据区固定5字节，不足补0x00
+        var paddedData = data
+        while paddedData.count < standardDataLength {
+            paddedData.append(0x00)
+        }
+        // 长度字段 = 数据区长度 + 3（LEN + CMD + CHECK）
+        let length = UInt8(standardDataLength + 3)
         let header: [UInt8] = [frameHeaderWrite, frameHeaderWrite2, length, cmd]
-        let payload = header + data
+        let payload = header + paddedData
         let checksum = calculateChecksum(payload)
         let frame: [UInt8] = payload + [checksum, frameFooterWrite1, frameFooterWrite2]
         return Data(frame)
@@ -46,37 +55,37 @@ class BLECommandBuilder {
     // MARK: - 数据读取命令 (手机→设备)
 
     /// 读取心率命令
-    /// 完整帧: AA 55 00 11 10 55 AA
+    /// 完整帧: AA 55 08 11 00 00 00 00 00 CHECK 55 AA
     static func readHeartRate() -> Data {
         buildWriteFrame(cmd: 0x11)
     }
 
     /// 读取血氧命令
-    /// 完整帧: AA 55 00 12 11 55 AA
+    /// 完整帧: AA 55 08 12 00 00 00 00 00 CHECK 55 AA
     static func readBloodOxygen() -> Data {
         buildWriteFrame(cmd: 0x12)
     }
 
     /// 读取步数命令
-    /// 完整帧: AA 55 00 13 12 55 AA
+    /// 完整帧: AA 55 08 13 00 00 00 00 00 CHECK 55 AA
     static func readStepCount() -> Data {
         buildWriteFrame(cmd: 0x13)
     }
 
     /// 读取电量命令
-    /// 完整帧: AA 55 00 14 13 55 AA
+    /// 完整帧: AA 55 08 14 00 00 00 00 00 CHECK 55 AA
     static func readBatteryLevel() -> Data {
         buildWriteFrame(cmd: 0x14)
     }
 
     /// 读取固件版本号命令
-    /// 完整帧: AA 55 00 15 14 55 AA
+    /// 完整帧: AA 55 08 15 00 00 00 00 00 CHECK 55 AA
     static func readFirmwareVersion() -> Data {
         buildWriteFrame(cmd: 0x15)
     }
 
     /// 读取序列号命令
-    /// 完整帧: AA 55 00 16 15 55 AA
+    /// 完整帧: AA 55 08 16 00 00 00 00 00 CHECK 55 AA
     static func readSerialNumber() -> Data {
         buildWriteFrame(cmd: 0x16)
     }
@@ -84,19 +93,19 @@ class BLECommandBuilder {
     // MARK: - 历史数据读取命令
 
     /// 读取心率历史命令
-    /// 完整帧: AA 55 00 17 16 55 AA
+    /// 完整帧: AA 55 08 17 00 00 00 00 00 CHECK 55 AA
     static func readHeartRateHistory() -> Data {
         buildWriteFrame(cmd: 0x17)
     }
 
     /// 读取血氧历史命令
-    /// 完整帧: AA 55 00 18 17 55 AA
+    /// 完整帧: AA 55 08 18 00 00 00 00 00 CHECK 55 AA
     static func readBloodOxygenHistory() -> Data {
         buildWriteFrame(cmd: 0x18)
     }
 
     /// 读取步数历史命令
-    /// 完整帧: AA 55 00 19 18 55 AA
+    /// 完整帧: AA 55 08 19 00 00 00 00 00 CHECK 55 AA
     static func readStepCountHistory() -> Data {
         buildWriteFrame(cmd: 0x19)
     }
@@ -109,7 +118,7 @@ class BLECommandBuilder {
     ///   - r: 红色分量 (0x00~0xFF)
     ///   - g: 绿色分量 (0x00~0xFF)
     ///   - b: 蓝色分量 (0x00~0xFF)
-    /// 完整帧: AA 55 04 21 SS RR GG BB CHECK 55 AA
+    /// 完整帧: AA 55 08 21 SS RR GG BB 00 CHECK 55 AA
     static func setLightSlotColor(slot: UInt8, r: UInt8, g: UInt8, b: UInt8) -> Data {
         buildWriteFrame(cmd: 0x21, data: [slot, r, g, b])
     }
@@ -118,7 +127,7 @@ class BLECommandBuilder {
     /// - Parameters:
     ///   - slot: 灯光槽编号 (00/01/02 指定槽, FF 表示当前灯光槽)
     ///   - brightness: 亮度值 (0~400)
-    /// 完整帧: AA 55 03 22 SS BR_H BR_L CHECK 55 AA
+    /// 完整帧: AA 55 08 22 SS BR_H BR_L 00 00 CHECK 55 AA
     static func setLightSlotBrightness(slot: UInt8, brightness: UInt16) -> Data {
         let brightnessHigh = UInt8(brightness >> 8)
         let brightnessLow = UInt8(brightness & 0xFF)
@@ -128,7 +137,7 @@ class BLECommandBuilder {
     /// 设置呼吸灯开关
     /// - Parameters:
     ///   - enabled: true 打开呼吸灯, false 关闭呼吸灯
-    /// 完整帧: AA 55 01 23 EN CHECK 55 AA
+    /// 完整帧: AA 55 08 23 EN 00 00 00 00 CHECK 55 AA
     static func setBreathingLight(enabled: Bool) -> Data {
         let value: UInt8 = enabled ? 0x01 : 0x00
         return buildWriteFrame(cmd: 0x23, data: [value])
@@ -136,7 +145,7 @@ class BLECommandBuilder {
 
     /// 切换当前灯光槽
     /// - Parameter slot: 灯光槽编号 (只能为 00/01/02)
-    /// 完整帧: AA 55 01 24 SS CHECK 55 AA
+    /// 完整帧: AA 55 08 24 SS 00 00 00 00 CHECK 55 AA
     static func switchLightSlot(slot: UInt8) -> Data {
         return buildWriteFrame(cmd: 0x24, data: [slot])
     }
@@ -145,15 +154,52 @@ class BLECommandBuilder {
 
     /// 读取灯光参数
     /// - Parameter slot: 灯光槽编号 (00/01/02 指定槽, FF 表示读取当前灯光槽)
-    /// 完整帧: AA 55 01 30 SS CHECK 55 AA
+    /// 完整帧: AA 55 08 30 SS 00 00 00 00 CHECK 55 AA
     static func readLightParams(slot: UInt8) -> Data {
         return buildWriteFrame(cmd: 0x30, data: [slot])
+    }
+
+    // MARK: - 产品信息命令
+
+    /// 读取产品型号命令
+    /// 完整帧: AA 55 08 1B 00 00 00 00 00 CHECK 55 AA
+    static func readProductModel() -> Data {
+        return buildWriteFrame(cmd: 0x1B)
+    }
+
+    // MARK: - 健康阈值设置命令
+
+    /// 设置心率低阈值
+    /// - Parameter threshold: 心率低阈值 (bpm)
+    /// 完整帧: AA 55 08 25 HR_LOW 00 00 00 00 CHECK 55 AA
+    static func setHeartRateLowThreshold(_ threshold: UInt8) -> Data {
+        return buildWriteFrame(cmd: 0x25, data: [threshold])
+    }
+
+    /// 设置心率高阈值
+    /// - Parameter threshold: 心率高阈值 (bpm)
+    /// 完整帧: AA 55 08 26 HR_HIGH 00 00 00 00 CHECK 55 AA
+    static func setHeartRateHighThreshold(_ threshold: UInt8) -> Data {
+        return buildWriteFrame(cmd: 0x26, data: [threshold])
+    }
+
+    /// 设置血氧低阈值
+    /// - Parameter threshold: 血氧低阈值 (%)
+    /// 完整帧: AA 55 08 27 SPO2_LOW 00 00 00 00 CHECK 55 AA
+    static func setBloodOxygenLowThreshold(_ threshold: UInt8) -> Data {
+        return buildWriteFrame(cmd: 0x27, data: [threshold])
+    }
+
+    /// 读取健康异常阈值命令
+    /// 完整帧: AA 55 08 28 00 00 00 00 00 CHECK 55 AA
+    static func readHealthAnomalyThresholds() -> Data {
+        return buildWriteFrame(cmd: 0x28)
     }
 
     // MARK: - 测试命令
 
     /// 写入假历史数据（测试用）
-    /// 完整帧: AA 55 00 1A 19 55 AA
+    /// 完整帧: AA 55 08 1A 00 00 00 00 00 CHECK 55 AA
     static func writeFakeHistoryData() -> Data {
         return buildWriteFrame(cmd: 0x1A)
     }
@@ -161,7 +207,7 @@ class BLECommandBuilder {
     // MARK: - OTA 升级命令
 
     /// 请求进入 OTA 模式
-    /// 完整帧: AA 55 00 40 3F 55 AA
+    /// 完整帧: AA 55 08 40 00 00 00 00 00 CHECK 55 AA
     static func enterOTAMode() -> Data {
         return buildWriteFrame(cmd: 0x40)
     }
