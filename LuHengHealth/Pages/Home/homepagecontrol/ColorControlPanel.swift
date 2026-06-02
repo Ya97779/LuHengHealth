@@ -21,6 +21,7 @@ struct ColorControlPanel: View {
     @Binding var slot2R: UInt8
     @Binding var slot2G: UInt8
     @Binding var slot2B: UInt8
+    @Binding var currentSlot: UInt8
     var onSlotTapped: ((UInt8) -> Void)? = nil
     
     private var slot0Color: Color {
@@ -57,6 +58,7 @@ struct ColorControlPanel: View {
                     slot0Color: slot0Color,
                     slot1Color: slot1Color,
                     slot2Color: slot2Color,
+                    currentSlot: currentSlot,
                     onSlotTapped: onSlotTapped
                 )
                 .scaleEffect(0.8)
@@ -74,6 +76,7 @@ struct ColorMemoryButtons: View {
     var slot0Color: Color
     var slot1Color: Color
     var slot2Color: Color
+    var currentSlot: UInt8 = 0
     var onSlotTapped: ((UInt8) -> Void)? = nil
     
     var body: some View {
@@ -85,12 +88,19 @@ struct ColorMemoryButtons: View {
     }
     
     private func slotButton(index: UInt8, color: Color) -> some View {
-        Button(action: {
+        let isSelected = currentSlot == index
+        
+        return Button(action: {
             onSlotTapped?(index)
         }) {
             Circle()
                 .fill(color)
                 .frame(width: 40, height: 40)
+                .overlay(
+                    Circle()
+                        .stroke(isSelected ? Color.white : Color.clear, lineWidth: 3)
+                )
+                .shadow(color: isSelected ? Color.white.opacity(0.8) : Color.clear, radius: isSelected ? 6 : 0)
                 .shadow(radius: 3)
                 .overlay(
                     Text("\(index)")
@@ -113,6 +123,7 @@ struct ColorMemoryButtons: View {
         slot1B: .constant(255),
         slot2R: .constant(0),
         slot2G: .constant(255),
-        slot2B: .constant(0)
+        slot2B: .constant(0),
+        currentSlot: .constant(0)
     )
 }

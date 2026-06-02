@@ -150,6 +150,7 @@ struct HomePage: View {
                                         slot2R: $viewModel.slot2R,
                                         slot2G: $viewModel.slot2G,
                                         slot2B: $viewModel.slot2B,
+                                        currentSlot: $viewModel.lightCurrentSlot,
                                         onSlotTapped: { slotIndex in
                                             // 点击灯光槽按钮时，切换到对应灯光槽
                                             viewModel.switchLightSlot(slot: slotIndex)

@@ -1109,6 +1109,8 @@ extension BLEViewModel: BLEAssistDelegate {
 
     func switchLightSlot(slot: UInt8) {
         sendCommand(0x24, data: [slot])
+        // 立即更新当前灯光槽（用于按钮高亮显示）
+        lightCurrentSlot = slot
         // 切换灯光槽后，延迟获取对应灯光槽的参数
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             self.requestLightParams(slot: slot)
