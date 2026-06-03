@@ -15,6 +15,7 @@ struct DevicePage: View {
     
 	@State private var showScanner: Bool = false //控制二维码扫描
     @State private var showBLEWindow = false // 控制蓝牙设备窗口的显示状态
+    @State private var showDeviceDetail = false // 控制设备详情弹窗
     
 	var body: some View {
         let bottomPadding: CGFloat = DeviceType.current == .iPad ? 300 : 100
@@ -116,6 +117,50 @@ struct DevicePage: View {
                                         destination: BLEContentView()
                                     )
                                     
+                                    // 设备详情按钮（使用 sheet 弹窗）
+                                    Button(action: {
+                                        showDeviceDetail = true
+                                    }) {
+                                        HStack(spacing: 16) {
+                                            ZStack {
+                                                Circle()
+                                                    .fill(Color.gray.opacity(0.1))
+                                                    .frame(width: 50, height: 50)
+                                                
+                                                Image(systemName: "app.connected.to.app.below.fill")
+                                                    .font(.system(size: 20))
+                                                    .foregroundColor(.orange)
+                                            }
+                                            
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text("查看设备详情")
+                                                    .font(.system(size: 16, weight: .medium))
+                                                    .foregroundColor(.black)
+                                                
+                                                Text("固件版本、产品序列号以及产品型号")
+                                                    .font(.system(size: 14))
+                                                    .foregroundColor(.gray)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            ZStack {
+                                                Circle()
+                                                    .fill(Color.gray.opacity(0.1))
+                                                    .frame(width: 30, height: 30)
+                                                
+                                                Image(systemName: "chevron.right")
+                                                    .font(.system(size: 14))
+                                                    .foregroundColor(.gray)
+                                            }
+                                        }
+                                        .padding(16)
+                                        .background(Color.white)
+                                        .cornerRadius(12)
+                                        .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: 2)
+                                    }
+                                    .buttonStyle(.plain)
+                                    
                                     CustomRow(
                                         icon: "dot.radiowaves.up.forward",
                                         iconColor: .orange,
@@ -132,13 +177,7 @@ struct DevicePage: View {
                                         destination: HomePage()
                                     )
                                     
-                                    CustomRow(
-                                        icon: "app.connected.to.app.below.fill",
-                                        iconColor: .orange,
-                                        title: "应用",
-                                        subtitle: "应用效果之类的",
-                                        destination: HomePage()
-                                    )
+
                                 }
                                 .padding(.horizontal, 20)
                                 .padding(.top, 20)
@@ -152,6 +191,9 @@ struct DevicePage: View {
                 Color.clear.frame(height: tabBarReservedHeight()  + bottomPadding)
 			}
 			.background(Color.clear)
+			.sheet(isPresented: $showDeviceDetail) {
+				DeviceDetailSheet(viewModel: viewModel)
+			}
 			
 				}
 			}
@@ -381,7 +423,113 @@ struct CustomRow<Destination: View>: View {
     }
 }
 
-
+// MARK: - 设备详情弹窗
+struct DeviceDetailSheet: View {
+    @ObservedObject var viewModel: BLEViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                // 固件版本
+                Section("固件版本") {
+                    HStack {
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.purple)
+                            .font(.title3)
+                        
+                        if let version = viewModel.firmwareVersion {
+                            Text("v\(version / 10).\(version % 10)")
+                                .font(.system(.title3, design: .rounded))
+                                .foregroundColor(.primary)
+                        } else {
+                            Text("未获取")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("刷新") {
+                            viewModel.requestFirmwareVersion()
+                        }
+                        .font(.caption)
+                    }
+                }
+                
+                // 产品序列号
+                Section("产品序列号") {
+                    HStack {
+                        Image(systemName: "number")
+                            .foregroundColor(.teal)
+                            .font(.title3)
+                        
+                        if let sn = viewModel.serialNumber {
+                            Text(sn)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundColor(.primary)
+                        } else {
+                            Text("未获取")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("刷新") {
+                            viewModel.requestSerialNumber()
+                        }
+                        .font(.caption)
+                    }
+                }
+                
+                // 产品型号
+                Section("产品型号") {
+                    HStack {
+                        Image(systemName: "tag.fill")
+                            .foregroundColor(.orange)
+                            .font(.title3)
+                        
+                        if let model = viewModel.productModel {
+                            Text("型号 \(model)")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                        } else {
+                            Text("未获取")
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("刷新") {
+                            viewModel.requestProductModel()
+                        }
+                        .font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("设备详情")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                // 进入页面时自动获取数据
+                if viewModel.firmwareVersion == nil {
+                    viewModel.requestFirmwareVersion()
+                }
+                if viewModel.serialNumber == nil {
+                    viewModel.requestSerialNumber()
+                }
+                if viewModel.productModel == nil {
+                    viewModel.requestProductModel()
+                }
+            }
+        }
+    }
+}
 
 
 #Preview {

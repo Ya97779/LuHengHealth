@@ -212,7 +212,7 @@ class BLEViewModel: NSObject, ObservableObject {
     @Published var lastAckStatus: UInt8? = nil
 
     // MARK: - 历史记录结构体
-    struct HistoryRecord {
+    struct HistoryRecord: Equatable {
         let year: Int, month: Int, day: Int, hour: Int, minute: Int
         let value: Int
     }
@@ -813,7 +813,6 @@ extension BLEViewModel: BLEAssistDelegate {
                 }
 
                 let hexStr = BLEProtocolParser.shared.bytesToHexString(value)
-                print("[BLE] 📥 收到 \(characteristic.uuid.uuidString): \(hexStr)")
 
                 self.latestValueByCharacteristic[characteristic.uuid] = value
                 self.valueLogByCharacteristic[characteristic.uuid, default: []].append(value)
@@ -828,9 +827,18 @@ extension BLEViewModel: BLEAssistDelegate {
                         return
                     }
 
+                    // 电量数据不打印日志（每5秒轮询一次，会刷屏）
+                    let isBatteryData = frame.type == .responseFrame && frame.cmd == 0x04
+                    
+                    if !isBatteryData {
+                        print("[BLE] 📥 收到 \(characteristic.uuid.uuidString): \(hexStr)")
+                    }
+
                     switch frame.type {
                     case .responseFrame:
-                        print("[BLE] 📋 返回帧 CMD=0x\(String(format: "%02X", frame.cmd)) 数据=\(BLEProtocolParser.shared.bytesToHexString(Data(frame.data)))")
+                        if !isBatteryData {
+                            print("[BLE] 📋 返回帧 CMD=0x\(String(format: "%02X", frame.cmd)) 数据=\(BLEProtocolParser.shared.bytesToHexString(Data(frame.data)))")
+                        }
                         self.handleResponseFrame(frame)
                     case .ackFrame:
                         print("[BLE] ✅ ACK帧 原CMD=0x\(String(format: "%02X", frame.originalCmd ?? 0)) 状态=\(frame.status == 0x01 ? "成功" : "失败")")
@@ -861,7 +869,6 @@ extension BLEViewModel: BLEAssistDelegate {
             print("[BLE] 🚶 步数: \(self.stepCount ?? 0) 步")
         case 0x04:
             self.batteryVoltage = BLEProtocolParser.shared.parseBatteryLevelResponse(frame)
-            print("[BLE] 🔋 电量: \(self.batteryVoltage ?? 0)%")
         case 0x05:
             self.firmwareVersion = BLEProtocolParser.shared.parseFirmwareVersionResponse(frame)
             let v = self.firmwareVersion ?? 0
@@ -1073,8 +1080,11 @@ extension BLEViewModel: BLEAssistDelegate {
     ///   - data: 数据区字节数组
     func sendCommand(_ cmd: UInt8, data: [UInt8] = []) {
         let frame = BLECommandBuilder.buildWriteFrame(cmd: cmd, data: data)
-        let cmdName = cmdNameForLog(cmd)
-        print("[BLE] 📤 发送: \(cmdName)")
+        // 电量命令不打印日志（因为每5秒轮询一次，会刷屏）
+        if cmd != 0x14 {
+            let cmdName = cmdNameForLog(cmd)
+            print("[BLE] 📤 发送: \(cmdName)")
+        }
         writeToFFE3(frame)
     }
 

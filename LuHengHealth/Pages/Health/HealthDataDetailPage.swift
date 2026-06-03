@@ -14,11 +14,13 @@ import Charts
 enum HealthDataType {
     case heartRate
     case bloodOxygen
+    case stepCount
     
     var title: String {
         switch self {
         case .heartRate: return "心率数据"
         case .bloodOxygen: return "血氧数据"
+        case .stepCount: return "步数数据"
         }
     }
     
@@ -26,6 +28,7 @@ enum HealthDataType {
         switch self {
         case .heartRate: return "bpm"
         case .bloodOxygen: return "%"
+        case .stepCount: return "步"
         }
     }
     
@@ -33,6 +36,7 @@ enum HealthDataType {
         switch self {
         case .heartRate: return "waveform.path.ecg"
         case .bloodOxygen: return "heart.fill"
+        case .stepCount: return "figure.walk"
         }
     }
     
@@ -40,6 +44,7 @@ enum HealthDataType {
         switch self {
         case .heartRate: return .red
         case .bloodOxygen: return .blue
+        case .stepCount: return .orange
         }
     }
     
@@ -47,6 +52,7 @@ enum HealthDataType {
         switch self {
         case .heartRate: return 40...180
         case .bloodOxygen: return 85...105
+        case .stepCount: return 0...20000
         }
     }
     
@@ -54,6 +60,7 @@ enum HealthDataType {
         switch self {
         case .heartRate: return "60-100 bpm"
         case .bloodOxygen: return "95-100%"
+        case .stepCount: return "目标 10000 步"
         }
     }
     
@@ -71,12 +78,19 @@ enum HealthDataType {
                 startPoint: .top,
                 endPoint: .bottom
             )
+        case .stepCount:
+            return LinearGradient(
+                gradient: Gradient(colors: [Color(red: 1.0, green: 0.9, blue: 0.8), Color(red: 1.0, green: 0.95, blue: 0.9)]),
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
     }
 }
 
 struct HealthDataDetailPage: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var viewModel: BLEViewModel
     
     let dataType: HealthDataType
     @State private var selectedTimeRange = "周" // 周、月
@@ -138,10 +152,40 @@ struct HealthDataDetailPage: View {
                 
                 // 白色背景内容区域
                 VStack(spacing: 0) {
+                    // 从设备获取历史数据按钮
+                    if viewModel.connectedDevices.first != nil {
+                        Button(action: {
+                            requestHistoryData()
+                        }) {
+                            HStack {
+                                Image(systemName: "arrow.down.circle")
+                                Text("从设备获取历史数据")
+                            }
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 16)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+                        }
+                        .padding(.top, 20)
+                        .onAppear {
+                            print("[HealthDetail] 按钮可见 - 已连接设备: \(viewModel.connectedDevices.first?.name ?? "无")")
+                        }
+                    } else {
+                        Text("请先连接设备以获取历史数据")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .padding(.top, 20)
+                            .onAppear {
+                                print("[HealthDetail] 按钮隐藏 - 无已连接设备")
+                            }
+                    }
+                    
                     // 时间范围选择器
                     TimeRangeSelector(selectedRange: $selectedTimeRange)
                         .padding(.horizontal, 20)
-                        .padding(.top, 30)
+                        .padding(.top, 15)
                     
                     // 健康数据图表
                     HealthDataChartsView(
@@ -189,6 +233,21 @@ struct HealthDataDetailPage: View {
         .onChange(of: selectedTimeRange) { _ in
             loadChartData()
         }
+        .onChange(of: viewModel.heartRateHistory) { _ in
+            if dataType == .heartRate {
+                loadChartData()
+            }
+        }
+        .onChange(of: viewModel.bloodOxygenHistory) { _ in
+            if dataType == .bloodOxygen {
+                loadChartData()
+            }
+        }
+        .onChange(of: viewModel.stepCountHistory) { _ in
+            if dataType == .stepCount {
+                loadChartData()
+            }
+        }
         .sheet(isPresented: $showCalendar) {
             HealthCalendarView(
                 selectedDate: $selectedDate,
@@ -201,6 +260,25 @@ struct HealthDataDetailPage: View {
     }
     
     // MARK: - 数据加载方法
+    
+    /// 请求设备历史数据
+    private func requestHistoryData() {
+        print("[HealthDetail] 点击了从设备获取历史数据按钮")
+        print("[HealthDetail] 数据类型: \(dataType)")
+        print("[HealthDetail] 已连接设备: \(viewModel.connectedDevices.first?.name ?? "无")")
+        
+        switch dataType {
+        case .heartRate:
+            print("[HealthDetail] 发送心率历史请求 CMD 0x17")
+            viewModel.requestHeartRateHistory()
+        case .bloodOxygen:
+            print("[HealthDetail] 发送血氧历史请求 CMD 0x18")
+            viewModel.requestBloodOxygenHistory()
+        case .stepCount:
+            print("[HealthDetail] 发送步数历史请求 CMD 0x19")
+            viewModel.requestStepCountHistory()
+        }
+    }
     
     /// 格式化日期字符串
     private func formatDateString(_ date: Date) -> String {
@@ -220,22 +298,51 @@ struct HealthDataDetailPage: View {
             let dateRange = self.getDateRange()
             var entries: [HealthDataEntry] = []
             
+            // 获取蓝牙历史数据
+            let bleHistory: BLEViewModel.HistoryRecord? = {
+                switch self.dataType {
+                case .heartRate: return self.viewModel.heartRateHistory
+                case .bloodOxygen: return self.viewModel.bloodOxygenHistory
+                case .stepCount: return self.viewModel.stepCountHistory
+                }
+            }()
+            
             for date in dateRange {
+                // 检查蓝牙历史数据是否匹配当前日期
+                var bleValue: Int? = nil
+                if let history = bleHistory {
+                    let calendar = Calendar.current
+                    let historyDate = calendar.date(from: DateComponents(
+                        year: 2000 + history.year,
+                        month: history.month,
+                        day: history.day
+                    ))
+                    if let historyDate = historyDate, calendar.isDate(historyDate, inSameDayAs: date) {
+                        bleValue = history.value
+                    }
+                }
+                
                 // 从数据库获取数据
                 let dayData = self.healthDataStorage.getHealthData(for: date)
                 
-                if !dayData.isEmpty {
+                if !dayData.isEmpty || bleValue != nil {
                     // 根据数据类型计算平均值
                     let averageValue: Int
                     let level: HealthDataLevel
                     
                     switch self.dataType {
                     case .heartRate:
-                        averageValue = dayData.map { Int($0.heartrate) }.reduce(0, +) / dayData.count
+                        let dbAverage = dayData.isEmpty ? 0 : dayData.map { Int($0.heartrate) }.reduce(0, +) / dayData.count
+                        averageValue = bleValue ?? dbAverage
                         level = self.getHeartRateLevel(averageValue)
                     case .bloodOxygen:
-                        averageValue = dayData.map { Int($0.bloodoxygen) }.reduce(0, +) / dayData.count
+                        let dbAverage = dayData.isEmpty ? 0 : dayData.map { Int($0.bloodoxygen) }.reduce(0, +) / dayData.count
+                        averageValue = bleValue ?? dbAverage
                         level = self.getBloodOxygenLevel(averageValue)
+                    case .stepCount:
+                        let dbAverage = dayData.isEmpty ? 0 : dayData.map { Int($0.heartrate) }.reduce(0, +) / dayData.count
+                        averageValue = bleValue ?? dbAverage
+                        level = self.getStepCountLevel(averageValue)
                     }
                     
                     let entry = HealthDataEntry(
@@ -317,6 +424,19 @@ struct HealthDataDetailPage: View {
         } else if value < 95 {
             return .low
         } else if value < 98 {
+            return .normal
+        } else {
+            return .high
+        }
+    }
+    
+    /// 根据步数值获取级别
+    private func getStepCountLevel(_ value: Int) -> HealthDataLevel {
+        if value == 0 {
+            return .noData
+        } else if value < 5000 {
+            return .low
+        } else if value < 10000 {
             return .normal
         } else {
             return .high
@@ -498,6 +618,8 @@ struct HealthDataChartsView: View {
             (normalMin, normalMax, rangeText) = (60, 100, "正常范围 60-100 bpm")
         case .bloodOxygen:
             (normalMin, normalMax, rangeText) = (95, 100, "正常范围 95-100%")
+        case .stepCount:
+            (normalMin, normalMax, rangeText) = (5000, 15000, "目标 5000-15000 步")
         }
         
         let totalRange = dataType.yAxisRange.upperBound - dataType.yAxisRange.lowerBound
@@ -608,6 +730,11 @@ struct HealthDataLegend: View {
                 LegendItem(color: .green, label: "正常 (95-97%)")
                 LegendItem(color: .yellow, label: "低 (<95%)")
                 LegendItem(color: .gray, label: "无数据")
+            case .stepCount:
+                LegendItem(color: .green, label: "达标 (≥10000步)")
+                LegendItem(color: .orange, label: "进行中 (5000-9999步)")
+                LegendItem(color: .yellow, label: "不足 (<5000步)")
+                LegendItem(color: .gray, label: "无数据")
             }
             
             Spacer()
@@ -639,6 +766,7 @@ enum HealthDataLevel: Equatable {
             switch dataType {
             case .heartRate: return .red
             case .bloodOxygen: return .purple
+            case .stepCount: return .green
             }
         case .noData: return .gray
         }

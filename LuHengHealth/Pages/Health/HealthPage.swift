@@ -240,6 +240,34 @@ struct HealthPage: View {
                         }
                         .padding(.horizontal)
                         
+                        // 轮询控制按钮
+                        HStack(spacing: 15) {
+                            PollingButton(
+                                title: "心率",
+                                icon: "waveform.path.ecg",
+                                color: .red,
+                                isPolling: viewModel.isHeartRatePolling,
+                                action: { viewModel.toggleHeartRatePolling() }
+                            )
+                            
+                            PollingButton(
+                                title: "血氧",
+                                icon: "heart.fill",
+                                color: .green,
+                                isPolling: viewModel.isBloodOxygenPolling,
+                                action: { viewModel.toggleBloodOxygenPolling() }
+                            )
+                            
+                            PollingButton(
+                                title: "步数",
+                                icon: "figure.walk",
+                                color: .orange,
+                                isPolling: viewModel.isStepCountPolling,
+                                action: { viewModel.toggleStepCountPolling() }
+                            )
+                        }
+                        .padding(.horizontal)
+                        
                         VStack(spacing: 15) {
                             // 第一排：心率 + 血氧
                             HStack(spacing: 15) {
@@ -270,7 +298,7 @@ struct HealthPage: View {
                                 title: "步数",
                                 value: getDisplayStepCount(),
                                 range: "目标10000步",
-                                icon: "heart.fill",
+                                icon: "figure.walk",
                                 color: .orange,
                                 progress: getDisplayStepCountProgress(),
                                 action: { showStepCountDetail = true }
@@ -278,33 +306,7 @@ struct HealthPage: View {
                         }
                         .padding(.horizontal)
                         
-                        // 轮询控制按钮
-                        HStack(spacing: 15) {
-                            PollingButton(
-                                title: "心率",
-                                icon: "waveform.path.ecg",
-                                color: .red,
-                                isPolling: viewModel.isHeartRatePolling,
-                                action: { viewModel.toggleHeartRatePolling() }
-                            )
-                            
-                            PollingButton(
-                                title: "血氧",
-                                icon: "heart.fill",
-                                color: .green,
-                                isPolling: viewModel.isBloodOxygenPolling,
-                                action: { viewModel.toggleBloodOxygenPolling() }
-                            )
-                            
-                            PollingButton(
-                                title: "步数",
-                                icon: "figure.walk",
-                                color: .orange,
-                                isPolling: viewModel.isStepCountPolling,
-                                action: { viewModel.toggleStepCountPolling() }
-                            )
-                        }
-                        .padding(.horizontal)
+
                     }
                 }
             }
@@ -322,9 +324,15 @@ struct HealthPage: View {
             }
             .sheet(isPresented: $showBloodOxygenDetail) {
                 HealthDataDetailPage(dataType: .bloodOxygen)
+                    .environmentObject(viewModel)
             }
             .sheet(isPresented: $showHeartRateDetail) {
                 HealthDataDetailPage(dataType: .heartRate)
+                    .environmentObject(viewModel)
+            }
+            .sheet(isPresented: $showStepCountDetail) {
+                HealthDataDetailPage(dataType: .stepCount)
+                    .environmentObject(viewModel)
             }
             .sheet(isPresented: $showStorageSettings) {
                 HealthDataStorageSettingsView(healthDataService: healthDataService)
