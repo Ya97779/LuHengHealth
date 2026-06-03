@@ -216,16 +216,24 @@ class BLECommandBuilder {
     /// - Parameters:
     ///   - firmwareSize: 固件真实总长度
     ///   - checksum: 整个固件真实字节的16位累加和
-    /// 完整帧: 90 SIZE3 SIZE2 SIZE1 SIZE0 SUM_H SUM_L 55
+    /// 完整帧: AA 55 09 90 SIZE3 SIZE2 SIZE1 SIZE0 SUM_H SUM_L CHECK 55 AA
     static func buildOTAStartFrame(firmwareSize: UInt32, checksum: UInt16) -> Data {
-        var frame: [UInt8] = [0x90]
-        frame.append(UInt8((firmwareSize >> 24) & 0xFF))  // SIZE3
-        frame.append(UInt8((firmwareSize >> 16) & 0xFF))  // SIZE2
-        frame.append(UInt8((firmwareSize >> 8) & 0xFF))   // SIZE1
-        frame.append(UInt8(firmwareSize & 0xFF))          // SIZE0
-        frame.append(UInt8((checksum >> 8) & 0xFF))       // SUM_H
-        frame.append(UInt8(checksum & 0xFF))              // SUM_L
-        frame.append(0x55)                                // 帧尾
+        var payload: [UInt8] = []
+        payload.append(0x90)                                      // CMD
+        payload.append(UInt8((firmwareSize >> 24) & 0xFF))        // SIZE3
+        payload.append(UInt8((firmwareSize >> 16) & 0xFF))        // SIZE2
+        payload.append(UInt8((firmwareSize >> 8) & 0xFF))         // SIZE1
+        payload.append(UInt8(firmwareSize & 0xFF))                // SIZE0
+        payload.append(UInt8((checksum >> 8) & 0xFF))             // SUM_H
+        payload.append(UInt8(checksum & 0xFF))                    // SUM_L
+        
+        // LEN = CMD(1) + DATA(6) + CHECK(1) = 8，但协议文档说是0x09
+        // 实际上 LEN = payload.count + 2 (加上LEN本身和CHECK)
+        let length = UInt8(payload.count + 2)  // 7 + 2 = 9 = 0x09
+        let header: [UInt8] = [frameHeaderWrite, frameHeaderWrite2, length]
+        let headerAndPayload = header + payload
+        let checksumByte = calculateChecksum(headerAndPayload)
+        let frame: [UInt8] = headerAndPayload + [checksumByte, frameFooterWrite1, frameFooterWrite2]
         return Data(frame)
     }
 
@@ -233,11 +241,12 @@ class BLECommandBuilder {
     /// - Parameters:
     ///   - sequence: 包序号 (从0开始递增)
     ///   - data: 固件数据 (固定64字节, 不足补0xFF)
-    /// 完整帧: 91 SEQ_H SEQ_L DATA_LEN CHECK_H CHECK_L DATA[64] 55 AA
+    /// 完整帧: AA 55 47 91 SEQ_H SEQ_L DATA_LEN CHECK_H CHECK_L DATA[64] CHECK 55 AA
     static func buildOTADataPacket(sequence: UInt16, data: Data) -> Data {
-        var frame: [UInt8] = [0x91]
-        frame.append(UInt8((sequence >> 8) & 0xFF))  // SEQ_H
-        frame.append(UInt8(sequence & 0xFF))         // SEQ_L
+        var payload: [UInt8] = []
+        payload.append(0x91)                                      // CMD
+        payload.append(UInt8((sequence >> 8) & 0xFF))             // SEQ_H
+        payload.append(UInt8(sequence & 0xFF))                    // SEQ_L
 
         // 固定64字节数据区
         var dataBytes = [UInt8](data)
@@ -250,13 +259,19 @@ class BLECommandBuilder {
         let checksumHigh = UInt8((dataSum >> 8) & 0xFF)
         let checksumLow = UInt8(dataSum & 0xFF)
 
-        frame.append(0x40)  // DATA_LEN 固定为 0x40 (64)
-        frame.append(checksumHigh)
-        frame.append(checksumLow)
-        frame.append(contentsOf: dataBytes.prefix(64))
-        frame.append(0x55)
-        frame.append(0xAA)
+        payload.append(0x40)  // DATA_LEN 固定为 0x40 (64)
+        payload.append(checksumHigh)
+        payload.append(checksumLow)
+        payload.append(contentsOf: dataBytes.prefix(64))
 
+        // LEN = payload.count + 2 (加上LEN本身和CHECK)
+        // 1(CMD) + 2(SEQ) + 1(DATA_LEN) + 2(CHECK_H/L) + 64(DATA) = 70
+        // LEN = 70 + 2 = 72 = 0x48
+        let length = UInt8(payload.count + 2)
+        let header: [UInt8] = [frameHeaderWrite, frameHeaderWrite2, length]
+        let headerAndPayload = header + payload
+        let checksumByte = calculateChecksum(headerAndPayload)
+        let frame: [UInt8] = headerAndPayload + [checksumByte, frameFooterWrite1, frameFooterWrite2]
         return Data(frame)
     }
 
@@ -264,16 +279,23 @@ class BLECommandBuilder {
     /// - Parameters:
     ///   - firmwareSize: 固件真实总长度
     ///   - checksum: 整个固件真实字节的16位累加和
-    /// 完整帧: 92 SIZE3 SIZE2 SIZE1 SIZE0 SUM_H SUM_L 55
+    /// 完整帧: AA 55 09 92 SIZE3 SIZE2 SIZE1 SIZE0 SUM_H SUM_L CHECK 55 AA
     static func buildOTAEndFrame(firmwareSize: UInt32, checksum: UInt16) -> Data {
-        var frame: [UInt8] = [0x92]
-        frame.append(UInt8((firmwareSize >> 24) & 0xFF))  // SIZE3
-        frame.append(UInt8((firmwareSize >> 16) & 0xFF))  // SIZE2
-        frame.append(UInt8((firmwareSize >> 8) & 0xFF))   // SIZE1
-        frame.append(UInt8(firmwareSize & 0xFF))          // SIZE0
-        frame.append(UInt8((checksum >> 8) & 0xFF))       // SUM_H
-        frame.append(UInt8(checksum & 0xFF))              // SUM_L
-        frame.append(0x55)                                // 帧尾
+        var payload: [UInt8] = []
+        payload.append(0x92)                                      // CMD
+        payload.append(UInt8((firmwareSize >> 24) & 0xFF))        // SIZE3
+        payload.append(UInt8((firmwareSize >> 16) & 0xFF))        // SIZE2
+        payload.append(UInt8((firmwareSize >> 8) & 0xFF))         // SIZE1
+        payload.append(UInt8(firmwareSize & 0xFF))                // SIZE0
+        payload.append(UInt8((checksum >> 8) & 0xFF))             // SUM_H
+        payload.append(UInt8(checksum & 0xFF))                    // SUM_L
+
+        // LEN = payload.count + 2 (加上LEN本身和CHECK)
+        let length = UInt8(payload.count + 2)  // 7 + 2 = 9 = 0x09
+        let header: [UInt8] = [frameHeaderWrite, frameHeaderWrite2, length]
+        let headerAndPayload = header + payload
+        let checksumByte = calculateChecksum(headerAndPayload)
+        let frame: [UInt8] = headerAndPayload + [checksumByte, frameFooterWrite1, frameFooterWrite2]
         return Data(frame)
     }
 

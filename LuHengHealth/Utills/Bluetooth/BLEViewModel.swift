@@ -168,6 +168,9 @@ class BLEViewModel: NSObject, ObservableObject {
 
     // MARK: - 新协议属性 (v2.0 CMD模式)
 
+    // OTA服务引用（用于转发OTA ACK）
+    weak var otaService: BLEOTAService?
+
     // 序列号
     @Published var serialNumber: String? = nil
 
@@ -845,6 +848,17 @@ extension BLEViewModel: BLEAssistDelegate {
                         self.handleAckFrame(frame)
                     case .otaAck:
                         print("[BLE] 🔄 OTA ACK帧 CMD=0x\(String(format: "%02X", frame.cmd))")
+                        // 转发给OTA服务处理
+                        if frame.isValid && frame.data.count >= 6 {
+                            self.otaService?.handleOTAAck(
+                                cmd: frame.data[0],
+                                status: frame.data[1],
+                                seqHigh: frame.data[2],
+                                seqLow: frame.data[3],
+                                progress: frame.data[4],
+                                errorCode: frame.data[5]
+                            )
+                        }
                         break
                     case .unknown:
                         print("[BLE] ❓ 未知帧类型: \(hexStr)")

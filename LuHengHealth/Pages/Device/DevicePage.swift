@@ -162,20 +162,21 @@ struct DevicePage: View {
                                     .buttonStyle(.plain)
                                     
                                     CustomRow(
+                                        icon: "arrow.triangle.2.circlepath",
+                                        iconColor: .orange,
+                                        title: "OTA升级",
+                                        subtitle: "检查设备固件更新，升级最新版本",
+                                        destination: OTAUpgradePage()
+                                    )
+                                    
+                                    CustomRow(
                                         icon: "dot.radiowaves.up.forward",
                                         iconColor: .orange,
                                         title: "多设备共连",
                                         subtitle: "多个设备同连，可查看多个数据",
                                         destination:Text("wwwww")
                                     )
-                                    
-                                    CustomRow(
-                                        icon: "arrow.triangle.2.circlepath",
-                                        iconColor: .orange,
-                                        title: "转变",
-                                        subtitle: "调整设备模式，如儿童模式",
-                                        destination: HomePage()
-                                    )
+
                                     
 
                                 }
