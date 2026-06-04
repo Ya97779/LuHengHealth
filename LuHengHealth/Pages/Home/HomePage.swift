@@ -20,8 +20,6 @@ struct HomePage: View {
     @State private var ModelColor: Color = .white
     @State var ModelBackground : Color = .clear
     @State private var showProductDisplay: Bool = false
-    @State private var isBreathingMode: Bool = false
-    @State private var breathingTimer: Timer?
     @State private var originalBrightness: Double = 1.0
     @State private var mode: UInt8 = 1
     
@@ -102,6 +100,18 @@ struct HomePage: View {
                                                 .foregroundColor(.gray)
                                         }
                                     }
+                                    
+                                    NavigationLink(destination: LightParamsPage(viewModel: viewModel)) {
+                                        VStack(spacing: DeviceType.current == .iPad ? 6 : 4) {
+                                            Image(systemName: "lightbulb.fill")
+                                                .font(.system(size: DeviceType.current == .iPad ? 28 : 20))
+                                                .foregroundColor(.yellow)
+                                            Text("灯光参数")
+                                                .font(.system(size: DeviceType.current == .iPad ? 16 : 12))
+                                                .foregroundColor(.gray)
+                                        }
+                                        .frame(minWidth: 10)
+                                    }
                                 }
                             }
                             .padding(.horizontal, ResponsiveSpacing.horizontal(config))
@@ -181,14 +191,14 @@ struct HomePage: View {
                                                 .offset(x:-12,y:0)
                                                 .overlay(
                                                     Circle()
-                                                        .stroke(isBreathingMode ? Color.cyan : Color.cyan.opacity(0.3), lineWidth: 2) // 呼吸模式时高亮
+                                                        .stroke(currentSlotBreathing ? Color.cyan : Color.cyan.opacity(0.3), lineWidth: 2) // 呼吸模式时高亮
                                                 )
                                         }
                                         .buttonStyle(.plain) // 去掉系统默认的高亮样式
                                         
                                         Text("呼吸模式")
                                             .font(.system(size: 12))
-                                            .foregroundColor(isBreathingMode ? .cyan : .black)
+                                            .foregroundColor(currentSlotBreathing ? .cyan : .black)
                                     }
                                     
                                     // 场景切换
@@ -291,36 +301,54 @@ struct HomePage: View {
             
         }
         .onDisappear {
-            // 视图消失时停止呼吸模式
-            stopBreathingMode()
-            // 停止节流定时器
+            // 停止节流定时器（呼吸模式保留在ViewModel中，不会因页面切换丢失）
             stopThrottleTimer()
         }
         
     }
     
+    // 获取当前槽位的呼吸模式状态
+    private var currentSlotBreathing: Bool {
+        switch viewModel.lightCurrentSlot {
+        case 0: return viewModel.slot0Breathing
+        case 1: return viewModel.slot1Breathing
+        case 2: return viewModel.slot2Breathing
+        default: return false
+        }
+    }
+    
     func BreathMode()
     {
-        if isBreathingMode {
-            // 如果已经在呼吸模式，则停止
+        if currentSlotBreathing {
+            // 如果当前槽位已经在呼吸模式，则停止
             stopBreathingMode()
         } else {
-            // 开始呼吸模式
+            // 开始当前槽位的呼吸模式
             startBreathingMode()
         }
     }
     
     private func startBreathingMode() {
-        isBreathingMode = true
+        // 根据当前槽位设置对应的呼吸模式状态
+        switch viewModel.lightCurrentSlot {
+        case 0: viewModel.slot0Breathing = true
+        case 1: viewModel.slot1Breathing = true
+        case 2: viewModel.slot2Breathing = true
+        default: break
+        }
         mode = 2
-                // 在呼吸模式下，使用模式值2表示呼吸效果
+        // 在呼吸模式下，使用模式值2表示呼吸效果
         sendCurrentColorWithBrightness()
-            
-        
     }
     
     private func stopBreathingMode() {
-        isBreathingMode = false
+        // 根据当前槽位停止对应的呼吸模式状态
+        switch viewModel.lightCurrentSlot {
+        case 0: viewModel.slot0Breathing = false
+        case 1: viewModel.slot1Breathing = false
+        case 2: viewModel.slot2Breathing = false
+        default: break
+        }
         // 关闭呼吸模式，使用模式值1表示普通效果
         mode = 1
         sendCurrentColorWithBrightness()

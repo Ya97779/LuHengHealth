@@ -198,11 +198,21 @@ class BLEViewModel: NSObject, ObservableObject {
     @Published var slot2R: UInt8 = 128
     @Published var slot2G: UInt8 = 128
     @Published var slot2B: UInt8 = 128
+    
+    // 三个灯光槽的独立亮度存储
+    @Published var slot0Brightness: UInt16 = 0
+    @Published var slot1Brightness: UInt16 = 0
+    @Published var slot2Brightness: UInt16 = 0
 
-    // 历史数据
-    @Published var heartRateHistory: HistoryRecord?
-    @Published var bloodOxygenHistory: HistoryRecord?
-    @Published var stepCountHistory: HistoryRecord?
+    // 历史数据（新协议：3天数据，每天24小时）
+    @Published var heartRateHistory: [DayHistoryData] = []
+    @Published var bloodOxygenHistory: [DayHistoryData] = []
+    @Published var stepCountHistory: [HistoryRecord] = []  // 步数保持单条格式
+    
+    // 原始历史数据（用于调试）
+    @Published var heartRateHistoryRawData: [String] = []
+    @Published var bloodOxygenHistoryRawData: [String] = []
+    @Published var stepCountHistoryRawData: [String] = []
 
     // 产品信息
     @Published var productModel: UInt8? = nil
@@ -219,6 +229,12 @@ class BLEViewModel: NSObject, ObservableObject {
         let year: Int, month: Int, day: Int, hour: Int, minute: Int
         let value: Int
     }
+    
+    // MARK: - 每日历史数据结构体（新协议）
+    struct DayHistoryData: Equatable {
+        let date: String  // 格式: "2026-06-01"
+        let hourlyValues: [Int]  // 24小时的值，索引0-23对应0-23时
+    }
 
     // MARK: - 轮询定时器
     private var pollingTimer: Timer?
@@ -228,6 +244,21 @@ class BLEViewModel: NSObject, ObservableObject {
     @Published var isHeartRatePolling: Bool = false
     @Published var isBloodOxygenPolling: Bool = false
     @Published var isStepCountPolling: Bool = false
+
+    // MARK: - 三个灯光槽的独立呼吸模式状态
+    @Published var slot0Breathing: Bool = false
+    @Published var slot1Breathing: Bool = false
+    @Published var slot2Breathing: Bool = false
+    
+    // MARK: - 呼吸模式状态（根据当前槽位自动计算）
+    var isBreathingMode: Bool {
+        switch lightCurrentSlot {
+        case 0: return slot0Breathing
+        case 1: return slot1Breathing
+        case 2: return slot2Breathing
+        default: return false
+        }
+    }
 
     /// 发现的蓝牙设备列表，UI会自动响应此数组的变化
     @Published var discoveredDevices: [BluetoothDevice] = []
@@ -915,38 +946,70 @@ extension BLEViewModel: BLEAssistDelegate {
     }
 
     private func handleHeartRateHistoryFrame(_ frame: ParsedFrame) {
-        if let timeFrame = BLEProtocolParser.shared.parseHeartRateHistoryResponse(frame) {
-            let hr = Int(frame.data[5])
-            self.heartRateHistory = HistoryRecord(
-                year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
-                hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
-                value: hr
-            )
-            print("[BLE] 📊 心率历史: \(timeFrame.dateString) = \(hr) bpm")
+        // 保存原始数据
+        let rawDataHex = BLEProtocolParser.shared.bytesToHexString(Data(frame.data))
+        self.heartRateHistoryRawData.append(rawDataHex)
+        
+        if let result = BLEProtocolParser.shared.parseHeartRateHistoryResponse(frame) {
+            for dayData in result {
+                let dayHistory = DayHistoryData(
+                    date: dayData.date,
+                    hourlyValues: dayData.hourlyData.map { $0.value }
+                )
+                self.heartRateHistory.append(dayHistory)
+                
+                // 打印有数据的小时
+                let nonZeroHours = dayData.hourlyData.filter { $0.value > 0 }
+                if !nonZeroHours.isEmpty {
+                    let hoursStr = nonZeroHours.map { "\($0.hour)时:\($0.value)bpm" }.joined(separator: ", ")
+                    print("[BLE] 📊 心率历史 \(dayData.date): \(hoursStr)")
+                } else {
+                    print("[BLE] 📊 心率历史 \(dayData.date): 全天无数据")
+                }
+            }
+            print("[BLE] 📊 心率历史共\(self.heartRateHistory.count)天")
         }
     }
 
     private func handleBloodOxygenHistoryFrame(_ frame: ParsedFrame) {
-        if let timeFrame = BLEProtocolParser.shared.parseBloodOxygenHistoryResponse(frame) {
-            let spo2 = Int(frame.data[5])
-            self.bloodOxygenHistory = HistoryRecord(
-                year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
-                hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
-                value: spo2
-            )
-            print("[BLE] 📊 血氧历史: \(timeFrame.dateString) = \(spo2)%")
+        // 保存原始数据
+        let rawDataHex = BLEProtocolParser.shared.bytesToHexString(Data(frame.data))
+        self.bloodOxygenHistoryRawData.append(rawDataHex)
+        
+        if let result = BLEProtocolParser.shared.parseBloodOxygenHistoryResponse(frame) {
+            for dayData in result {
+                let dayHistory = DayHistoryData(
+                    date: dayData.date,
+                    hourlyValues: dayData.hourlyData.map { $0.value }
+                )
+                self.bloodOxygenHistory.append(dayHistory)
+                
+                // 打印有数据的小时
+                let nonZeroHours = dayData.hourlyData.filter { $0.value > 0 }
+                if !nonZeroHours.isEmpty {
+                    let hoursStr = nonZeroHours.map { "\($0.hour)时:\($0.value)%" }.joined(separator: ", ")
+                    print("[BLE] 📊 血氧历史 \(dayData.date): \(hoursStr)")
+                } else {
+                    print("[BLE] 📊 血氧历史 \(dayData.date): 全天无数据")
+                }
+            }
+            print("[BLE] 📊 血氧历史共\(self.bloodOxygenHistory.count)天")
         }
     }
 
     private func handleStepCountHistoryFrame(_ frame: ParsedFrame) {
-        if let timeFrame = BLEProtocolParser.shared.parseStepCountHistoryResponse(frame) {
-            let steps = Int(frame.data[5]) << 8 | Int(frame.data[6])
-            self.stepCountHistory = HistoryRecord(
-                year: Int(timeFrame.year), month: Int(timeFrame.month), day: Int(timeFrame.day),
-                hour: Int(timeFrame.hour), minute: Int(timeFrame.minute),
-                value: steps
+        // 保存原始数据
+        let rawDataHex = BLEProtocolParser.shared.bytesToHexString(Data(frame.data))
+        self.stepCountHistoryRawData.append(rawDataHex)
+        
+        if let result = BLEProtocolParser.shared.parseStepCountHistoryResponse(frame) {
+            let record = HistoryRecord(
+                year: Int(result.time.year), month: Int(result.time.month), day: Int(result.time.day),
+                hour: Int(result.time.hour), minute: Int(result.time.minute),
+                value: result.steps
             )
-            print("[BLE] 📊 步数历史: \(timeFrame.dateString) = \(steps) 步")
+            self.stepCountHistory.append(record)
+            print("[BLE] 📊 步数历史: \(result.time.dateString) = \(result.steps) 步 (共\(self.stepCountHistory.count)条)")
         }
     }
 
@@ -960,20 +1023,23 @@ extension BLEViewModel: BLEAssistDelegate {
             self.lightBrightness = lightParams.brightness
             self.lightBreathing = lightParams.breathing
 
-            // 更新对应灯光槽的RGB值
+            // 更新对应灯光槽的RGB值和亮度
             switch lightParams.slot {
             case 0:
                 self.slot0R = lightParams.r
                 self.slot0G = lightParams.g
                 self.slot0B = lightParams.b
+                self.slot0Brightness = lightParams.brightness
             case 1:
                 self.slot1R = lightParams.r
                 self.slot1G = lightParams.g
                 self.slot1B = lightParams.b
+                self.slot1Brightness = lightParams.brightness
             case 2:
                 self.slot2R = lightParams.r
                 self.slot2G = lightParams.g
                 self.slot2B = lightParams.b
+                self.slot2Brightness = lightParams.brightness
             default: break
             }
 
@@ -1035,11 +1101,26 @@ extension BLEViewModel: BLEAssistDelegate {
         case 0x02:
             self.alarmMessage = "设备电量低：\(alarm.paramA)%"
         case 0x11:
-            self.alarmMessage = "心率过低：\(alarm.paramA) bpm（低于 \(alarm.paramB)）"
+            // 心率过低告警，使用app中存储的阈值
+            if let thresholds = self.healthThresholds {
+                self.alarmMessage = "心率过低：\(alarm.paramA) bpm（阈值：\(thresholds.heartRateLow) bpm）"
+            } else {
+                self.alarmMessage = "心率过低：\(alarm.paramA) bpm"
+            }
         case 0x12:
-            self.alarmMessage = "心率过高：\(alarm.paramA) bpm（高于 \(alarm.paramB)）"
+            // 心率过高告警，使用app中存储的阈值
+            if let thresholds = self.healthThresholds {
+                self.alarmMessage = "心率过高：\(alarm.paramA) bpm（阈值：\(thresholds.heartRateHigh) bpm）"
+            } else {
+                self.alarmMessage = "心率过高：\(alarm.paramA) bpm"
+            }
         case 0x21:
-            self.alarmMessage = "血氧过低：\(alarm.paramA)%（低于 \(alarm.paramB)%）"
+            // 血氧过低告警，使用app中存储的阈值
+            if let thresholds = self.healthThresholds {
+                self.alarmMessage = "血氧过低：\(alarm.paramA)%（阈值：\(thresholds.bloodOxygenLow)%）"
+            } else {
+                self.alarmMessage = "血氧过低：\(alarm.paramA)%"
+            }
         case 0x22:
             self.alarmMessage = "血氧无效：\(alarm.paramA)%（超过100%）"
         default:
@@ -1111,9 +1192,9 @@ extension BLEViewModel: BLEAssistDelegate {
     func requestFirmwareVersion()  { sendCommand(0x15) }
     func requestSerialNumber()     { sendCommand(0x16) }
 
-    func requestHeartRateHistory()    { sendCommand(0x17) }
-    func requestBloodOxygenHistory()  { sendCommand(0x18) }
-    func requestStepCountHistory()    { sendCommand(0x19) }
+    func requestHeartRateHistory()    { heartRateHistory = []; heartRateHistoryRawData = []; sendCommand(0x17) }
+    func requestBloodOxygenHistory()  { bloodOxygenHistory = []; bloodOxygenHistoryRawData = []; sendCommand(0x18) }
+    func requestStepCountHistory()    { stepCountHistory = []; stepCountHistoryRawData = []; sendCommand(0x19) }
 
     // MARK: - 灯光控制命令
 
@@ -1184,6 +1265,8 @@ extension BLEViewModel: BLEAssistDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { self.requestLightParams() }
         // 请求三个灯光槽的颜色参数
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { self.requestAllLightSlotParams() }
+        // 请求健康阈值
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { self.requestHealthAnomalyThresholds() }
     }
 
     // MARK: - 旧接口兼容

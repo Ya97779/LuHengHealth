@@ -298,27 +298,55 @@ struct HealthDataDetailPage: View {
             let dateRange = self.getDateRange()
             var entries: [HealthDataEntry] = []
             
-            // 获取蓝牙历史数据
-            let bleHistory: BLEViewModel.HistoryRecord? = {
+            // 获取蓝牙历史数据（心率和血氧使用新协议DayHistoryData）
+            let bleDayHistory: [BLEViewModel.DayHistoryData] = {
                 switch self.dataType {
                 case .heartRate: return self.viewModel.heartRateHistory
                 case .bloodOxygen: return self.viewModel.bloodOxygenHistory
-                case .stepCount: return self.viewModel.stepCountHistory
+                case .stepCount: return []
                 }
             }()
             
+            // 获取步数历史数据（保持旧格式）
+            let stepHistory: [BLEViewModel.HistoryRecord] = {
+                if self.dataType == .stepCount {
+                    return self.viewModel.stepCountHistory
+                }
+                return []
+            }()
+            
             for date in dateRange {
-                // 检查蓝牙历史数据是否匹配当前日期
                 var bleValue: Int? = nil
-                if let history = bleHistory {
-                    let calendar = Calendar.current
-                    let historyDate = calendar.date(from: DateComponents(
-                        year: 2000 + history.year,
-                        month: history.month,
-                        day: history.day
-                    ))
-                    if let historyDate = historyDate, calendar.isDate(historyDate, inSameDayAs: date) {
-                        bleValue = history.value
+                
+                if self.dataType == .stepCount {
+                    // 步数使用旧格式
+                    for history in stepHistory {
+                        let calendar = Calendar.current
+                        let historyDate = calendar.date(from: DateComponents(
+                            year: 2000 + history.year,
+                            month: history.month,
+                            day: history.day
+                        ))
+                        if let historyDate = historyDate, calendar.isDate(historyDate, inSameDayAs: date) {
+                            bleValue = history.value
+                            break
+                        }
+                    }
+                } else {
+                    // 心率和血氧使用新格式
+                    let dateFormatter = DateFormatter()
+                    dateFormatter.dateFormat = "yyyy-MM-dd"
+                    let dateStr = dateFormatter.string(from: date)
+                    
+                    for dayData in bleDayHistory {
+                        if dayData.date == dateStr {
+                            // 计算当天有数据小时的平均值
+                            let nonZeroValues = dayData.hourlyValues.filter { $0 > 0 }
+                            if !nonZeroValues.isEmpty {
+                                bleValue = nonZeroValues.reduce(0, +) / nonZeroValues.count
+                            }
+                            break
+                        }
                     }
                 }
                 

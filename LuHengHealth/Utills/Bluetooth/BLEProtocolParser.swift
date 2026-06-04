@@ -77,7 +77,7 @@ struct LightParamsFrame {
 }
 
 // MARK: - 健康异常阈值
-struct HealthAnomalyThresholds {
+struct HealthAnomalyThresholds: Equatable {
     let heartRateLow: UInt8
     let heartRateHigh: UInt8
     let bloodOxygenLow: UInt8
@@ -363,42 +363,75 @@ class BLEProtocolParser {
     }
 
     /// 解析心率历史返回帧 (CMD 0x07)
-    /// 单帧格式: YY MM DD HH MIN HR (6字节)
-    func parseHeartRateHistoryResponse(_ frame: ParsedFrame) -> HistoryTimeFrame? {
-        guard frame.isValid && frame.cmd == 0x07 && frame.data.count >= 6 else { return nil }
-        return HistoryTimeFrame(
-            year: frame.data[0],
-            month: frame.data[1],
-            day: frame.data[2],
-            hour: frame.data[3],
-            minute: frame.data[4]
-        )
+    /// 新协议格式: 3天数据，每天24小时心率值
+    /// 数据区81字节 = 3 × (3字节日期 + 24字节小时心率)
+    /// 返回: [(日期, [(小时, 心率)])]
+    func parseHeartRateHistoryResponse(_ frame: ParsedFrame) -> [(date: String, hourlyData: [(hour: Int, value: Int)])]? {
+        guard frame.isValid && frame.cmd == 0x07 && frame.data.count >= 81 else { return nil }
+        
+        var result: [(date: String, hourlyData: [(hour: Int, value: Int)])] = []
+        
+        for dayIndex in 0..<3 {
+            let baseIndex = dayIndex * 27
+            let year = Int(frame.data[baseIndex]) + 2000
+            let month = Int(frame.data[baseIndex + 1])
+            let day = Int(frame.data[baseIndex + 2])
+            let dateStr = String(format: "%04d-%02d-%02d", year, month, day)
+            
+            var hourlyData: [(hour: Int, value: Int)] = []
+            for hour in 0..<24 {
+                let hr = Int(frame.data[baseIndex + 3 + hour])
+                hourlyData.append((hour: hour, value: hr))
+            }
+            
+            result.append((date: dateStr, hourlyData: hourlyData))
+        }
+        
+        return result
     }
 
     /// 解析血氧历史返回帧 (CMD 0x08)
-    /// 单帧格式: YY MM DD HH MIN SPO2 (6字节)
-    func parseBloodOxygenHistoryResponse(_ frame: ParsedFrame) -> HistoryTimeFrame? {
-        guard frame.isValid && frame.cmd == 0x08 && frame.data.count >= 6 else { return nil }
-        return HistoryTimeFrame(
-            year: frame.data[0],
-            month: frame.data[1],
-            day: frame.data[2],
-            hour: frame.data[3],
-            minute: frame.data[4]
-        )
+    /// 新协议格式: 3天数据，每天24小时血氧值
+    /// 数据区81字节 = 3 × (3字节日期 + 24字节小时血氧)
+    /// 返回: [(日期, [(小时, 血氧)])]
+    func parseBloodOxygenHistoryResponse(_ frame: ParsedFrame) -> [(date: String, hourlyData: [(hour: Int, value: Int)])]? {
+        guard frame.isValid && frame.cmd == 0x08 && frame.data.count >= 81 else { return nil }
+        
+        var result: [(date: String, hourlyData: [(hour: Int, value: Int)])] = []
+        
+        for dayIndex in 0..<3 {
+            let baseIndex = dayIndex * 27
+            let year = Int(frame.data[baseIndex]) + 2000
+            let month = Int(frame.data[baseIndex + 1])
+            let day = Int(frame.data[baseIndex + 2])
+            let dateStr = String(format: "%04d-%02d-%02d", year, month, day)
+            
+            var hourlyData: [(hour: Int, value: Int)] = []
+            for hour in 0..<24 {
+                let spo2 = Int(frame.data[baseIndex + 3 + hour])
+                hourlyData.append((hour: hour, value: spo2))
+            }
+            
+            result.append((date: dateStr, hourlyData: hourlyData))
+        }
+        
+        return result
     }
 
     /// 解析步数历史返回帧 (CMD 0x09)
     /// 单帧格式: YY MM DD HH MIN STEP_H STEP_L (7字节)
-    func parseStepCountHistoryResponse(_ frame: ParsedFrame) -> HistoryTimeFrame? {
+    /// 返回: (时间信息, 步数值)
+    func parseStepCountHistoryResponse(_ frame: ParsedFrame) -> (time: HistoryTimeFrame, steps: Int)? {
         guard frame.isValid && frame.cmd == 0x09 && frame.data.count >= 7 else { return nil }
-        return HistoryTimeFrame(
+        let timeFrame = HistoryTimeFrame(
             year: frame.data[0],
             month: frame.data[1],
             day: frame.data[2],
             hour: frame.data[3],
             minute: frame.data[4]
         )
+        let steps = Int(frame.data[5]) << 8 | Int(frame.data[6])
+        return (time: timeFrame, steps: steps)
     }
 
     // MARK: - 辅助方法

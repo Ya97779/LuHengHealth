@@ -8,9 +8,6 @@
 import SwiftUI
 
 struct HealthPage: View {
-    @State private var showBloodOxygenDetail = false
-    @State private var showHeartRateDetail = false
-    @State private var showStepCountDetail = false
     @State private var showStorageSettings = false
     @State private var showTestTool = false
     @State private var showCalendar = false
@@ -268,6 +265,24 @@ struct HealthPage: View {
                         }
                         .padding(.horizontal)
                         
+                        // 历史数据按钮
+                        NavigationLink(destination: HistoryDataPage(viewModel: viewModel)) {
+                            HStack {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .foregroundColor(.purple)
+                                Text("查看历史数据")
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.gray)
+                            }
+                            .padding()
+                            .background(Color.white.opacity(0.8))
+                            .cornerRadius(12)
+                        }
+                        .padding(.horizontal)
+                        
                         VStack(spacing: 15) {
                             // 第一排：心率 + 血氧
                             HStack(spacing: 15) {
@@ -275,21 +290,19 @@ struct HealthPage: View {
                                 HealthDataCard(
                                     title: "心率",
                                     value: getDisplayHeartRate(),
-                                    range: "40-160bpm",
+                                    range: getHeartRateRange(),
                                     icon: "waveform.path.ecg",
                                     color: .red,
-                                    progress: Double(getDisplayHeartRateValue()) / 100,
-                                    action: { showHeartRateDetail = true }
+                                    progress: Double(getDisplayHeartRateValue()) / 100
                                 )
                                 // 血氧卡片
                                 HealthDataCard(
                                     title: "血氧",
                                     value: getDisplayBloodOxygen(),
-                                    range: "94-100",
+                                    range: getBloodOxygenRange(),
                                     icon: "heart.fill",
                                     color: .green,
-                                    progress: Double(getDisplayBloodOxygenValue()) / 100,
-                                    action: { showBloodOxygenDetail = true }
+                                    progress: Double(getDisplayBloodOxygenValue()) / 100
                                 )
                             }
                             
@@ -300,11 +313,14 @@ struct HealthPage: View {
                                 range: "目标10000步",
                                 icon: "figure.walk",
                                 color: .orange,
-                                progress: getDisplayStepCountProgress(),
-                                action: { showStepCountDetail = true }
+                                progress: getDisplayStepCountProgress()
                             )
                         }
                         .padding(.horizontal)
+                        
+                        // 阈值设置卡片
+                        ThresholdSettingsCard(viewModel: viewModel)
+                            .padding(.horizontal)
                         
 
                     }
@@ -322,18 +338,6 @@ struct HealthPage: View {
                     }
                 }
             }
-            .sheet(isPresented: $showBloodOxygenDetail) {
-                HealthDataDetailPage(dataType: .bloodOxygen)
-                    .environmentObject(viewModel)
-            }
-            .sheet(isPresented: $showHeartRateDetail) {
-                HealthDataDetailPage(dataType: .heartRate)
-                    .environmentObject(viewModel)
-            }
-            .sheet(isPresented: $showStepCountDetail) {
-                HealthDataDetailPage(dataType: .stepCount)
-                    .environmentObject(viewModel)
-            }
             .sheet(isPresented: $showStorageSettings) {
                 HealthDataStorageSettingsView(healthDataService: healthDataService)
             }
@@ -349,6 +353,11 @@ struct HealthPage: View {
                     healthDataService.loadHealthData(for: selectedDate)
                     print("从日历选择了日期: \(healthDataService.formatDate(selectedDate))")
                 }
+            }
+            .alert("设备告警", isPresented: $viewModel.showAlarm) {
+                Button("确认", role: .cancel) { }
+            } message: {
+                Text(viewModel.alarmMessage ?? "未知告警")
             }
         }
         .navigationViewStyle(StackNavigationViewStyle())
@@ -463,6 +472,22 @@ struct HealthPage: View {
         }
         return 0.0
     }
+    
+    /// 获取心率阈值范围显示文本
+    private func getHeartRateRange() -> String {
+        if let thresholds = viewModel.healthThresholds {
+            return "\(thresholds.heartRateLow)-\(thresholds.heartRateHigh)bpm"
+        }
+        return "60-100bpm"
+    }
+    
+    /// 获取血氧阈值范围显示文本
+    private func getBloodOxygenRange() -> String {
+        if let thresholds = viewModel.healthThresholds {
+            return "\(thresholds.bloodOxygenLow)-100%"
+        }
+        return "95-100%"
+    }
 }
 
 // MARK: - 健康数据卡片组件
@@ -473,7 +498,6 @@ struct HealthDataCard: View {
     var icon: String
     var color: Color
     var progress: Double
-    var action: (() -> Void)? = nil
     
     var body: some View {
         RoundedRectangle(cornerRadius: 15)
@@ -486,13 +510,6 @@ struct HealthDataCard: View {
                             .font(.headline)
                             .foregroundColor(.black)
                         Spacer()
-                        Button(action: {
-                            action?()
-                        }) {
-                            Image(systemName: "chevron.right.2")
-                                .foregroundColor(.gray)
-                        }
-                        .disabled(action == nil)
                     }
                     Text(value)
                         .font(.title2)
@@ -555,6 +572,112 @@ struct PollingButton: View {
             .cornerRadius(12)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+// MARK: - 阈值设置卡片组件
+struct ThresholdSettingsCard: View {
+    @ObservedObject var viewModel: BLEViewModel
+    @State private var heartRateLow: Double = 60
+    @State private var heartRateHigh: Double = 100
+    @State private var bloodOxygenLow: Double = 95
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "slider.horizontal.3")
+                    .foregroundColor(.purple)
+                Text("健康阈值设置")
+                    .font(.headline)
+                Spacer()
+                Button("读取") {
+                    viewModel.requestHealthAnomalyThresholds()
+                }
+                .font(.caption)
+                .foregroundColor(.blue)
+            }
+            
+            Divider()
+            
+            // 心率低阈值
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("心率低阈值")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int(heartRateLow)) bpm")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                Slider(value: $heartRateLow, in: 40...80, step: 1)
+                    .accentColor(.blue)
+            }
+            
+            // 心率高阈值
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("心率高阈值")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int(heartRateHigh)) bpm")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                Slider(value: $heartRateHigh, in: 100...180, step: 1)
+                    .accentColor(.red)
+            }
+            
+            // 血氧低阈值
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("血氧低阈值")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int(bloodOxygenLow)) %")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+                Slider(value: $bloodOxygenLow, in: 85...99, step: 1)
+                    .accentColor(.green)
+            }
+            
+            // 设置按钮
+            Button(action: {
+                viewModel.setHeartRateLowThreshold(UInt8(heartRateLow))
+                viewModel.setHeartRateHighThreshold(UInt8(heartRateHigh))
+                viewModel.setBloodOxygenLowThreshold(UInt8(bloodOxygenLow))
+            }) {
+                Text("保存阈值设置")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.purple)
+                    .cornerRadius(8)
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.8))
+        .cornerRadius(15)
+        .onAppear {
+            // 如果已有阈值数据，初始化滑块
+            if let thresholds = viewModel.healthThresholds {
+                heartRateLow = Double(thresholds.heartRateLow)
+                heartRateHigh = Double(thresholds.heartRateHigh)
+                bloodOxygenLow = Double(thresholds.bloodOxygenLow)
+            }
+        }
+        .onChange(of: viewModel.healthThresholds) { newThresholds in
+            if let thresholds = newThresholds {
+                heartRateLow = Double(thresholds.heartRateLow)
+                heartRateHigh = Double(thresholds.heartRateHigh)
+                bloodOxygenLow = Double(thresholds.bloodOxygenLow)
+            }
+        }
     }
 }
 
